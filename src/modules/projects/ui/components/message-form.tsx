@@ -2,7 +2,6 @@ import { z } from "zod";
 import { toast } from "sonner";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import TextareaAutosize from "react-textarea-autosize";
 import { ArrowUpIcon, Loader2Icon } from "lucide-react";
@@ -27,7 +26,6 @@ const formSchema = z.object({
 
 export const MessageForm = ({ projectId }: Props) => {
   const trpc = useTRPC();
-  const router = useRouter();
   const queryClient = useQueryClient();
 
   const { data: usage } = useQuery(trpc.usage.status.queryOptions());
@@ -52,9 +50,6 @@ export const MessageForm = ({ projectId }: Props) => {
     onError: (error) => {
       toast.error(error.message);
 
-      if (error.data?.code === "TOO_MANY_REQUESTS") {
-        router.push("/pricing");
-      }
     },
   }));
   
@@ -76,6 +71,7 @@ export const MessageForm = ({ projectId }: Props) => {
         <Usage
           points={usage.remainingPoints}
           msBeforeNext={usage.msBeforeNext}
+          unlimited={usage.unlimited}
         />
       )}
       <form

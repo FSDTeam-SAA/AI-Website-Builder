@@ -19,6 +19,7 @@ import {
 import { FragmentWeb } from "../components/fragment-web";
 import { ProjectHeader } from "../components/project-header";
 import { MessagesContainer } from "../components/messages-container";
+import { FragmentDownloadButton } from "../components/fragment-download-button";
 import { ErrorBoundary } from "react-error-boundary";
 
 interface Props {
@@ -76,6 +77,12 @@ export const ProjectView = ({ projectId }: Props) => {
                 </TabsTrigger>
               </TabsList>
               <div className="ml-auto flex items-center gap-x-2">
+                {!!activeFragment?.files && (
+                  <FragmentDownloadButton
+                    files={activeFragment.files as { [path: string]: string }}
+                    title={activeFragment.title}
+                  />
+                )}
                 {!hasProAccess && (
                   <Button asChild size="sm" variant="tertiary">
                     <Link href="/pricing">

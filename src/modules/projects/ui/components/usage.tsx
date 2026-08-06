@@ -9,9 +9,10 @@ import { Button } from "@/components/ui/button";
 interface Props {
   points: number;
   msBeforeNext: number;
+  unlimited?: boolean;
 };
 
-export const Usage = ({ points, msBeforeNext }: Props) => {
+export const Usage = ({ points, msBeforeNext, unlimited = false }: Props) => {
   const { has } = useAuth();
   const hasProAccess = has?.({ plan: "pro" });
 
@@ -35,13 +36,17 @@ export const Usage = ({ points, msBeforeNext }: Props) => {
       <div className="flex items-center gap-x-2">
         <div>
           <p className="text-sm">
-            {points} {hasProAccess ? "": "free"} credits remaining
+            {unlimited
+              ? "Unlimited credits"
+              : `${points} ${hasProAccess ? "" : "free "}credits remaining`}
           </p>
-          <p className="text-xs text-muted-foreground">
-            Resets in{" "}{resetTime}
-          </p>
+          {!unlimited && (
+            <p className="text-xs text-muted-foreground">
+              Resets in{" "}{resetTime}
+            </p>
+          )}
         </div>
-        {!hasProAccess && (
+        {!hasProAccess && !unlimited && (
           <Button
             asChild
             size="sm"

@@ -53,14 +53,11 @@ export const ProjectForm = () => {
         clerk.openSignIn();
       }
 
-      if (error.data?.code === "TOO_MANY_REQUESTS") {
-        router.push("/pricing");
-      }
     },
   }));
   
-  const onSubmit = async (values: z.infer<typeof formSchema>) => {
-    await createProject.mutateAsync({
+  const onSubmit = (values: z.infer<typeof formSchema>) => {
+    createProject.mutate({
       value: values.value,
     });
   };

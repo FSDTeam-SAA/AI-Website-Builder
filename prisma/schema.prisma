@@ -65,4 +65,5 @@ model Usage {
   key String  @id
   points Int
   expire DateTime?
+  unlimited Boolean @default(false)
 }
