@@ -137,10 +137,12 @@ export const codeAgentFunction = inngest.createFunction(
       return { sandboxId: session.sandboxId, url: session.url };
     });
 
-    // 2. The agent loop, as one durable unit. Tools intentionally do not open
-    //    nested steps: the previous implementation gave every call of a tool the
-    //    same step name, so Inngest replayed the first result for all of them.
-    const outcome = await step.run("run-agent", async () => {
+    // 2. The agent loop. Deliberately NOT wrapped in step.run: agent-kit opens
+    //    its own Inngest steps internally, and nesting them inside ours triggers
+    //    NESTING_STEPS and breaks memoisation. Tools likewise do not open steps —
+    //    the original code gave every call of a tool the same step name, so
+    //    Inngest replayed the first result for all of them.
+    const outcome = await (async () => {
       const sandbox = await connectIfAlive(sandboxInfo.sandboxId);
       if (!sandbox) throw new Error("Lost connection to the preview sandbox");
 
@@ -268,7 +270,7 @@ export const codeAgentFunction = inngest.createFunction(
           detail: usage.detail(),
         },
       };
-    });
+    })();
 
     const succeeded =
       !!outcome.summary && Object.keys(outcome.touched ?? {}).length > 0;
@@ -299,7 +301,7 @@ export const codeAgentFunction = inngest.createFunction(
 
     // 3. Title + reply. Only reached on success — the original ran both of these
     //    model calls before checking for failure, paying for them every time.
-    const { title, reply, summaryUsage } = await step.run("summarise", async () => {
+    const { title, reply, summaryUsage } = await (async () => {
       const fast = getModel("fast");
       const fastSpec = resolveModelSpec("fast");
       const usage = new UsageAccumulator();
@@ -330,7 +332,7 @@ export const codeAgentFunction = inngest.createFunction(
         reply: parseAgentOutput(replyOut.output, "Here's what I built for you."),
         summaryUsage: { ...usage.totals(), detail: usage.detail() },
       };
-    });
+    })();
 
     await step.run("save-result", async () => {
       const { filesVersion } = await getProjectFiles(projectId);

@@ -40,6 +40,14 @@ export interface ModelSpec {
   /** Whether the model accepts images — required for the attachment pre-pass. */
   vision: boolean;
   /**
+   * Whether a custom `temperature` may be sent.
+   *
+   * OpenAI's GPT-5 family rejects anything but the default with
+   * `400 unsupported_value`, which kills the request outright. Older models
+   * accept it. Sending it unconditionally broke every run.
+   */
+  supportsTemperature?: boolean;
+  /**
    * Approximate USD per 1M tokens, for the cost estimate shown in the UI.
    *
    * Provider pricing changes and this is not billed against — every surface
@@ -351,6 +359,29 @@ export function resolveModelSpec(role: ModelRole, override?: string | null): Mod
   );
 }
 
+/**
+ * Whether a custom temperature is safe to send.
+ *
+ * Explicit flag first, with a pattern fallback so a GPT-5 model added later
+ * without the flag still does the right thing instead of 400-ing every run.
+ */
+export function allowsTemperature(spec: ModelSpec): boolean {
+  if (spec.supportsTemperature !== undefined) return spec.supportsTemperature;
+  return !isReasoningModel(spec);
+}
+
+/**
+ * OpenAI's GPT-5 family, which behaves differently from the 4.x models in two
+ * ways that both break tool-driven agents: it rejects a custom `temperature`,
+ * and it refuses function tools unless `reasoning_effort` is `"none"`.
+ *
+ * A pattern check rather than a hardcoded list, so a GPT-5 model added later
+ * doesn't silently reintroduce either failure.
+ */
+export function isReasoningModel(spec: ModelSpec): boolean {
+  return spec.provider === "openai" && /^gpt-5/.test(spec.id);
+}
+
 /** Build the agent-kit adapter for a role. */
 export function getModel(
   role: ModelRole,
@@ -361,12 +392,23 @@ export function getModel(
   const temperature = opts.temperature ?? (role === "fast" ? 0.3 : 0.1);
 
   switch (spec.provider) {
-    case "openai":
+    case "openai": {
+      const isReasoning = isReasoningModel(spec);
       return openai({
         model: spec.id,
         apiKey,
-        defaultParameters: { temperature },
+        defaultParameters: {
+          // GPT-5 rejects `temperature` being present with any non-default
+          // value, so it is omitted entirely rather than defaulted.
+          ...(allowsTemperature(spec) ? { temperature } : {}),
+          // This agent is entirely tool-driven, and GPT-5 refuses function
+          // tools on /v1/chat/completions unless reasoning is off:
+          // "Function tools with reasoning_effort are not supported … set
+          // reasoning_effort to 'none'".
+          ...(isReasoning ? { reasoning_effort: "none" } : {}),
+        },
       });
+    }
     case "anthropic":
       return anthropic({
         model: spec.id,

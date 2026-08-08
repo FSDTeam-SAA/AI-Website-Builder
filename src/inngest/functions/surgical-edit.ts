@@ -315,7 +315,7 @@ export const surgicalEditFunction = inngest.createFunction(
       return true;
     });
 
-    const outcome = await step.run("run-surgical-edit", async () => {
+    const outcome = await (async () => {
       const { files } = await getProjectFiles(projectId);
       const selection = buildSelectionContext(locator, files);
       const userPrompt =
@@ -328,16 +328,14 @@ export const surgicalEditFunction = inngest.createFunction(
         userPrompt,
         emitLabel: "Locating the element you selected",
       });
-    });
+    })();
 
-    return step.run("finish", () =>
-      finish({
-        projectId,
-        messageId,
-        ...outcome,
-        fallbackReply: "Done — I've updated that element.",
-      }),
-    );
+    return finish({
+      projectId,
+      messageId,
+      ...outcome,
+      fallbackReply: "Done — I've updated that element.",
+    });
   },
 );
 
@@ -378,25 +376,21 @@ export const fixErrorFunction = inngest.createFunction(
       return true;
     });
 
-    const outcome = await step.run("run-fix", async () =>
-      runSurgicalAgent({
-        projectId,
-        messageId,
-        systemPrompt: FIX_ERROR_PROMPT,
-        userPrompt:
-          `The app produced the following ${source} error. Find the root cause and fix it.\n\n` +
-          `<error_output>\n${errorText.slice(0, 16000)}\n</error_output>`,
-        emitLabel: "Reading the error",
-      }),
-    );
+    const outcome = await runSurgicalAgent({
+      projectId,
+      messageId,
+      systemPrompt: FIX_ERROR_PROMPT,
+      userPrompt:
+        `The app produced the following ${source} error. Find the root cause and fix it.\n\n` +
+        `<error_output>\n${errorText.slice(0, 16000)}\n</error_output>`,
+      emitLabel: "Reading the error",
+    });
 
-    return step.run("finish", () =>
-      finish({
-        projectId,
-        messageId,
-        ...outcome,
-        fallbackReply: "Fixed — the error should be gone now.",
-      }),
-    );
+    return finish({
+      projectId,
+      messageId,
+      ...outcome,
+      fallbackReply: "Fixed — the error should be gone now.",
+    });
   },
 );

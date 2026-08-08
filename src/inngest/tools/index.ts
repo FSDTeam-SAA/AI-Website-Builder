@@ -216,7 +216,7 @@ export function createListFilesTool(ctx: ToolContext) {
       "List the project's files. Cheap — call this first to orient yourself " +
       "instead of reading files speculatively.",
     parameters: z.object({
-      dir: z.string().optional().describe('Directory to list, e.g. "app". Omit for all.'),
+      dir: z.string().nullable().describe('Directory to list, e.g. "app". Pass null for all.'),
     }),
     handler: async ({ dir }) => {
       const prefix = dir ? `${normalizeFilePath(dir)}/` : "";
@@ -243,13 +243,13 @@ export function createSearchFilesTool(ctx: ToolContext) {
       "fastest way to find where something is defined or rendered.",
     parameters: z.object({
       pattern: z.string().describe("JavaScript regular expression"),
-      pathGlob: z.string().optional().describe('e.g. "app/**/*.tsx"'),
-      maxResults: z.number().int().min(1).max(80).optional(),
+      pathGlob: z.string().nullable().describe('e.g. "app/**/*.tsx", or null for all files'),
+      maxResults: z.number().int().min(1).max(80).nullable(),
     }),
     handler: async ({ pattern, pathGlob, maxResults }) => {
       await ctx.emit("TOOL_CALL", `Searching for ${pattern.slice(0, 60)}`);
       const { hits, truncated, error } = searchProjectFiles(ctx.files, pattern, {
-        pathGlob,
+        pathGlob: pathGlob ?? undefined,
         maxResults: maxResults ?? 40,
       });
       if (error) return `ERROR: ${error}`;
@@ -269,8 +269,8 @@ export function createReadFileTool(ctx: ToolContext) {
       'Use repo-relative paths like "app/page.tsx".',
     parameters: z.object({
       path: z.string(),
-      startLine: z.number().int().min(1).optional(),
-      endLine: z.number().int().min(1).optional(),
+      startLine: z.number().int().min(1).nullable(),
+      endLine: z.number().int().min(1).nullable(),
     }),
     handler: async ({ path, startLine, endLine }) => {
       const key = normalizeFilePath(path);
@@ -289,7 +289,9 @@ export function createReadFileTool(ctx: ToolContext) {
       if (content === undefined) return `ERROR: ${key} does not exist.`;
 
       await ctx.emit("TOOL_CALL", `Reading ${key}`);
-      return truncate(renderWithLineNumbers(content, startLine, endLine));
+      return truncate(
+        renderWithLineNumbers(content, startLine ?? undefined, endLine ?? undefined),
+      );
     },
   });
 }
@@ -333,7 +335,7 @@ export function createEditFileTool(ctx: ToolContext) {
           z.object({
             oldString: z.string().min(1),
             newString: z.string(),
-            replaceAll: z.boolean().optional(),
+            replaceAll: z.boolean().nullable(),
           }),
         )
         .min(1)
