@@ -8,7 +8,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 
 export type FrameworkValue = "NEXTJS" | "STATIC_HTML";
@@ -51,16 +50,21 @@ export const FrameworkSelect = ({ value, onChange, disabled, className }: Props)
       disabled={disabled}
       onValueChange={(v) => onChange(v as FrameworkValue)}
     >
+      {/* Renders its own label rather than <SelectValue/>, which would echo the
+          selected item's two-line content into the trigger. */}
       <SelectTrigger
         size="sm"
-        className={cn("h-7 w-auto gap-1.5 border-none text-xs shadow-none", className)}
+        className={cn(
+          "h-7 w-auto max-w-[9rem] gap-1.5 border-none px-2 text-xs shadow-none",
+          className,
+        )}
         aria-label="Project type"
       >
-        <ActiveIcon className="size-3.5 text-muted-foreground" />
-        <SelectValue />
+        <ActiveIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate">{active.label}</span>
       </SelectTrigger>
 
-      <SelectContent align="start">
+      <SelectContent align="start" className="w-64">
         {OPTIONS.map((option) => {
           const Icon = option.icon;
           return (
