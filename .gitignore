@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# `.env*` does NOT match `env.example` (no leading dot). That gap is how live
+# credentials were committed in 1a1270b. Keep env.example placeholders-only.
 
 # vercel
 .vercel
@@ -41,3 +43,6 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# local inngest dev-server state (SQLite; contains past event payloads)
+/.inngest

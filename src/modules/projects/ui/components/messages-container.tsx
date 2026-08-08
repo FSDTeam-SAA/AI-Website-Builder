@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react";
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 
 import { useTRPC } from "@/trpc/client";
-import { Fragment } from "@/generated/prisma";
+import type { FragmentSummary } from "@/modules/projects/types";
+import { useProjectStream } from "@/modules/preview/hooks/use-project-stream";
 
 import { MessageCard } from "./message-card";
 import { MessageForm } from "./message-form";
@@ -10,8 +12,8 @@ import { MessageLoading } from "./message-loading";
 
 interface Props {
   projectId: string;
-  activeFragment: Fragment | null;
-  setActiveFragment: (fragment: Fragment | null) => void;
+  activeFragment: FragmentSummary | null;
+  setActiveFragment: (fragment: FragmentSummary | null) => void;
 };
 
 export const MessagesContainer = ({ 
@@ -20,14 +22,36 @@ export const MessagesContainer = ({
   setActiveFragment
 }: Props) => {
   const trpc = useTRPC();
+  const queryClient = useQueryClient();
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastAssistantMessageIdRef = useRef<string | null>(null);
 
-  const { data: messages } = useSuspenseQuery(trpc.messages.getMany.queryOptions({
-    projectId: projectId,
-  }, {
-    refetchInterval: 2000,
-  }));
+  const { data: messages } = useSuspenseQuery(
+    trpc.messages.getMany.queryOptions(
+      { projectId },
+      {
+        // The SSE stream invalidates this the moment a run finishes, so the
+        // poll is only a safety net for a dropped connection — not the primary
+        // update path it used to be at 2s.
+        refetchInterval: 30_000,
+      },
+    ),
+  );
+
+  const { events } = useProjectStream(projectId);
+
+  // A generation can run for minutes; before this there was no way to stop one
+  // once it started. The Inngest functions already declare `cancelOn`.
+  const cancel = useMutation({
+    ...trpc.messages.cancel.mutationOptions(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: trpc.messages.getMany.queryKey({ projectId }),
+      });
+      toast.success("Generation stopped");
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   useEffect(() => {
     const lastAssistantMessage = messages.findLast(
@@ -58,6 +82,11 @@ export const MessagesContainer = ({
             <MessageCard
               key={message.id}
               content={message.content}
+              projectId={projectId}
+              attachments={message.attachments}
+              promptTokens={message.promptTokens}
+              completionTokens={message.completionTokens}
+              costUsd={message.costUsd}
               role={message.role}
               fragment={message.fragment}
               createdAt={message.createdAt}
@@ -66,7 +95,11 @@ export const MessagesContainer = ({
               type={message.type}
             />
           ))}
-          {isLastMessageUser && <MessageLoading />}
+          {isLastMessageUser && <MessageLoading
+              events={events}
+              isStopping={cancel.isPending}
+              onStop={() => cancel.mutate({ projectId })}
+            />}
           <div ref={bottomRef} />
         </div>
       </div>

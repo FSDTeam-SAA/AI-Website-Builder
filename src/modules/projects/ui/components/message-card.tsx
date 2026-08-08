@@ -3,27 +3,62 @@ import { format } from "date-fns";
 import { ChevronRightIcon, Code2Icon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { Markdown } from "@/components/markdown";
+import { formatCost, formatTokens } from "@/lib/ai/format";
 import { Card } from "@/components/ui/card";
-import { Fragment, MessageRole, MessageType } from "@/generated/prisma";
+import { MessageRole, MessageType } from "@/generated/prisma";
+import type { FragmentSummary } from "@/modules/projects/types";
+
+export interface MessageAttachment {
+  id: string;
+  name: string;
+  width: number | null;
+  height: number | null;
+}
 
 interface UserMessageProps {
   content: string;
+  projectId: string;
+  attachments?: MessageAttachment[];
 }
 
-const UserMessage = ({ content }: UserMessageProps) => {
+const UserMessage = ({ content, projectId, attachments }: UserMessageProps) => {
   return (
-    <div className="flex justify-end pb-4 pr-2 pl-10">
-      <Card className="rounded-lg bg-muted p-3 shadow-none border-none max-w-[80%] break-words">
-        {content}
+    <div className="flex justify-end pb-4 pl-10 pr-2">
+      <Card className="max-w-[80%] break-words rounded-lg border-none bg-muted p-3 shadow-none">
+        {!!attachments?.length && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {attachments.map((attachment) => (
+              <a
+                key={attachment.id}
+                href={`/api/projects/${projectId}/attachments/${attachment.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block overflow-hidden rounded-md border transition-opacity hover:opacity-80"
+              >
+                {/* Served from an owner-scoped route, so next/image can't optimise it. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/api/projects/${projectId}/attachments/${attachment.id}`}
+                  alt={attachment.name}
+                  className="max-h-40 max-w-full object-contain"
+                  loading="lazy"
+                />
+              </a>
+            ))}
+          </div>
+        )}
+        {/* User text stays literal — they may paste code or markdown syntax. */}
+        <span className="whitespace-pre-wrap">{content}</span>
       </Card>
     </div>
   );
-}
+};
 
 interface FragmentCardProps {
-  fragment: Fragment;
+  fragment: FragmentSummary;
   isActiveFragment: boolean;
-  onFragmentClick: (fragment: Fragment) => void;
+  onFragmentClick: (fragment: FragmentSummary) => void;
 };
 
 const FragmentCard = ({
@@ -56,12 +91,15 @@ const FragmentCard = ({
 
 interface AssistantMessageProps {
   content: string;
-  fragment: Fragment | null;
+  fragment: FragmentSummary | null;
   createdAt: Date;
   isActiveFragment: boolean;
-  onFragmentClick: (fragment: Fragment) => void;
+  onFragmentClick: (fragment: FragmentSummary) => void;
   type: MessageType;
-};
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  costUsd?: number | null;
+}
 
 const AssistantMessage = ({
   content,
@@ -70,6 +108,9 @@ const AssistantMessage = ({
   isActiveFragment,
   onFragmentClick,
   type,
+  promptTokens,
+  completionTokens,
+  costUsd,
 }: AssistantMessageProps) => {
   return (
     <div className={cn(
@@ -88,9 +129,18 @@ const AssistantMessage = ({
         <span className="text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
           {format(createdAt, "HH:mm 'on' MMM dd, yyyy")}
         </span>
+        {!!(promptTokens || completionTokens) && (
+          <span
+            className="font-mono text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+            title={`${promptTokens ?? 0} prompt + ${completionTokens ?? 0} completion tokens · estimated cost`}
+          >
+            {formatTokens((promptTokens ?? 0) + (completionTokens ?? 0))} tok
+            {typeof costUsd === "number" && ` · ${formatCost(costUsd)}`}
+          </span>
+        )}
       </div>
       <div className="pl-8.5 flex flex-col gap-y-4">
-        <span>{content}</span>
+        <Markdown>{content}</Markdown>
         {fragment && type === "RESULT" && (
           <FragmentCard
             fragment={fragment}
@@ -105,22 +155,32 @@ const AssistantMessage = ({
 
 interface MessageCardProps {
   content: string;
+  projectId: string;
+  attachments?: MessageAttachment[];
   role: MessageRole;
-  fragment: Fragment | null;
+  fragment: FragmentSummary | null;
   createdAt: Date;
   isActiveFragment: boolean;
-  onFragmentClick: (fragment: Fragment) => void;
+  onFragmentClick: (fragment: FragmentSummary) => void;
   type: MessageType;
-};
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  costUsd?: number | null;
+}
 
 export const MessageCard = ({
   content,
+  projectId,
+  attachments,
   role,
   fragment,
   createdAt,
   isActiveFragment,
   onFragmentClick,
   type,
+  promptTokens,
+  completionTokens,
+  costUsd,
 }: MessageCardProps) => {
   if (role === "ASSISTANT") {
     return (
@@ -131,11 +191,14 @@ export const MessageCard = ({
         isActiveFragment={isActiveFragment}
         onFragmentClick={onFragmentClick}
         type={type}
+        promptTokens={promptTokens}
+        completionTokens={completionTokens}
+        costUsd={costUsd}
       />
-    )
+    );
   }
 
   return (
-    <UserMessage content={content} />
+    <UserMessage content={content} projectId={projectId} attachments={attachments} />
   );
 };

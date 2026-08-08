@@ -16,6 +16,9 @@ import { useTRPC } from "@/trpc/client";
 import { Button } from "@/components/ui/button";
 import { Form, FormField } from "@/components/ui/form";
 
+import { ModelSelect } from "./model-select";
+import { FrameworkSelect } from "./framework-select";
+
 import { PROJECT_TEMPLATES } from "../../constants";
 
 const formSchema = z.object({
@@ -59,6 +62,8 @@ export const ProjectForm = () => {
   const onSubmit = (values: z.infer<typeof formSchema>) => {
     createProject.mutate({
       value: values.value,
+      modelId,
+      framework,
     });
   };
 
@@ -70,6 +75,8 @@ export const ProjectForm = () => {
     });
   };
   
+  const [modelId, setModelId] = useState<string | null>(null);
+  const [framework, setFramework] = useState<"NEXTJS" | "STATIC_HTML">("NEXTJS");
   const [isFocused, setIsFocused] = useState(false);
   const isPending = createProject.isPending;
   const isButtonDisabled = isPending || !form.formState.isValid;
@@ -107,11 +114,15 @@ export const ProjectForm = () => {
             )}
           />
           <div className="flex gap-x-2 items-end justify-between pt-2">
-            <div className="text-[10px] text-muted-foreground font-mono">
-              <kbd className="ml-auto pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
-                <span>&#8984;</span>Enter
-              </kbd>
-              &nbsp;to submit
+            <div className="flex items-center gap-2">
+              <FrameworkSelect value={framework} onChange={setFramework} disabled={isPending} />
+              <ModelSelect value={modelId} onChange={setModelId} disabled={isPending} />
+              <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">
+                <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
+                  <span>&#8984;</span>Enter
+                </kbd>
+                &nbsp;to submit
+              </span>
             </div>
             <Button
               disabled={isButtonDisabled}

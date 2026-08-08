@@ -23,5 +23,11 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    // Source for the E2B sandbox image. It is a separate Next application with
+    // its own dependency graph, compiled inside the sandbox — not part of this
+    // app's build.
+    "sandbox-templates"
+  ]
 }

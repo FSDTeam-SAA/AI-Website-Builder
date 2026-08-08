@@ -1,4 +1,8 @@
-import { Inngest } from "inngest";
+import { EventSchemas, Inngest } from "inngest";
 
-// Create a client to send and receive events
-export const inngest = new Inngest({ id: "vibe-development" });
+import type { VibeEvents } from "./types";
+
+export const inngest = new Inngest({
+  id: "vibe",
+  schemas: new EventSchemas().fromRecord<VibeEvents>(),
+});
