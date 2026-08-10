@@ -15,6 +15,7 @@
 
 # next.js
 /.next/
+/.next-dev/
 /out/
 
 # production
@@ -31,7 +32,6 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
-.env*
 # `.env*` does NOT match `env.example` (no leading dot). That gap is how live
 # credentials were committed in 1a1270b. Keep env.example placeholders-only.
 
@@ -46,3 +46,4 @@ next-env.d.ts
 
 # local inngest dev-server state (SQLite; contains past event payloads)
 /.inngest
+config.bat

@@ -6,7 +6,7 @@
  * type error, because they are compiled independently.
  */
 
-export const VIBE_PROTOCOL_VERSION = 1 as const;
+export const VIBE_PROTOCOL_VERSION = 2 as const;
 
 export type VibeMode = "off" | "inspect" | "text-edit";
 

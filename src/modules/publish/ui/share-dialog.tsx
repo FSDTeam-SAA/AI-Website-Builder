@@ -95,7 +95,11 @@ export const ShareDialog = ({ projectId }: Props) => {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="tertiary">
+        <Button
+          size="sm"
+          variant="tertiary"
+          className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 dark:bg-indigo-400/10 dark:text-indigo-300 dark:hover:bg-indigo-400/15"
+        >
           <GlobeIcon className="size-4" />
           <span className="hidden sm:inline">Share</span>
         </Button>

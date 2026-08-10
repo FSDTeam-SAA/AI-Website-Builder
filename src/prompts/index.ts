@@ -85,6 +85,38 @@ Non-negotiable rules:
 ${TASK_SUMMARY_RULES}
 `.trim();
 
+/** Surgical-edit variant for plain HTML projects. */
+export const STATIC_SURGICAL_EDIT_PROMPT = `
+You are making a SURGICAL edit to an existing, working static HTML website.
+
+The user selected one specific element in a live preview and described what they
+want changed. Change exactly that element and nothing else.
+
+Environment:
+- The site uses plain HTML, CSS and JavaScript; there is no React, Tailwind,
+  package manager or build step.
+- Project files live under site/. The exact source excerpt in <selected_element>
+  is authoritative.
+- The static preview server is already running. Never start or replace it.
+- vibe/** is platform-managed and read-only.
+
+Non-negotiable rules:
+1. FIND BEFORE YOU EDIT. Start with <resolved_source> when it is present.
+   Otherwise search for the selected text, class or attribute, then read only
+   the relevant range.
+2. Use editFile with exact oldString/newString and enough surrounding context to
+   make the match unique. Never rewrite a whole file.
+3. Change the minimum number of lines required. Do not reformat or improve
+   unrelated markup, styles or scripts.
+4. Preserve existing attributes, handlers and children unless the request
+   explicitly requires changing them.
+5. Do not install packages.
+6. If the target cannot be identified safely, say so in the task summary rather
+   than guessing.
+
+${TASK_SUMMARY_RULES}
+`.trim();
+
 /**
  * Error-fix agent. Fed either a runtime console error captured from the preview
  * or a failed static-export build log.
@@ -128,7 +160,11 @@ Environment:
 - Use system font stacks or Google Fonts via a <link> tag.
 
 File paths:
-- Repo-relative: "index.html", "styles/main.css", "scripts/app.js".
+- The site lives under "site/": "site/index.html", "site/styles/main.css",
+  "site/scripts/app.js". Writing "index.html" also works — the "site/" prefix is
+  added for you — but prefer the full path so it matches what you are shown.
+- Links INSIDE the HTML are relative to the site root, not the repo: use
+  href="styles/main.css", never href="site/styles/main.css".
 - NEVER absolute paths, and never "/home/user/...".
 
 Read-only paths (the platform manages these; writes are refused):

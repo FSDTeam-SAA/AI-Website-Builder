@@ -1,8 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { CornerDownLeftIcon, FileCodeIcon, Loader2Icon, SparklesIcon, XIcon } from "lucide-react";
-import TextareaAutosize from "react-textarea-autosize";
+import { ArrowLeftIcon, FileCodeIcon, MousePointerClickIcon, XIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { describeLocator, type VibeElementLocator } from "@/modules/preview/protocol";
@@ -11,102 +9,54 @@ interface Props {
   locator: VibeElementLocator;
   sourcePath: string | null;
   sourceLine: number | null;
-  isSubmitting: boolean;
-  onSubmit: (instruction: string) => void;
   onDismiss: () => void;
 }
 
 /**
- * Docked action bar for the currently selected element.
+ * Read-only banner for the currently selected element.
  *
- * Deliberately docked rather than anchored to the element: an anchored popover
- * would need the iframe's scroll position mirrored into parent coordinates on
- * every frame, and drifts the moment anything inside the preview scrolls.
+ * The instruction box used to live here, which gave the app two composers doing
+ * the same job — and the one you were typing in was on the opposite side of the
+ * screen from the conversation it joined. The chat composer now owns targeted
+ * edits; this only has to say what is selected and where it lives.
+ *
+ * Still docked rather than anchored to the element: an anchored popover would
+ * need the iframe's scroll position mirrored into parent coordinates on every
+ * frame, and drifts the moment anything inside the preview scrolls.
  */
-export const SelectionPanel = ({
-  locator,
-  sourcePath,
-  sourceLine,
-  isSubmitting,
-  onSubmit,
-  onDismiss,
-}: Props) => {
-  const [instruction, setInstruction] = useState("");
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  // A fresh selection means a fresh instruction.
-  useEffect(() => {
-    setInstruction("");
-    inputRef.current?.focus();
-  }, [locator.nodeId]);
-
-  const submit = () => {
-    const value = instruction.trim();
-    if (!value || isSubmitting) return;
-    onSubmit(value);
-    setInstruction("");
-  };
-
+export const SelectionPanel = ({ locator, sourcePath, sourceLine, onDismiss }: Props) => {
   return (
-    <div className="border-t bg-background p-3 shadow-[0_-4px_12px_-8px_rgba(0,0,0,.3)]">
-      <div className="mb-2 flex items-center gap-2">
-        <span className="rounded-md bg-primary/10 px-2 py-1 font-mono text-xs font-medium text-primary">
-          {describeLocator(locator)}
-        </span>
-        {sourcePath && (
-          <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-            <FileCodeIcon className="size-3 shrink-0" />
-            <span className="truncate">
-              {sourcePath}
-              {sourceLine ? `:${sourceLine}` : ""}
-            </span>
+    <div className="flex items-center gap-2 border-t bg-background px-3 py-2 shadow-[0_-4px_12px_-8px_rgba(0,0,0,.3)]">
+      <MousePointerClickIcon className="size-3.5 shrink-0 text-primary" />
+
+      <span className="max-w-[45%] truncate rounded-md bg-primary/10 px-2 py-1 font-mono text-xs font-medium text-primary">
+        {describeLocator(locator)}
+      </span>
+
+      {sourcePath && (
+        <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+          <FileCodeIcon className="size-3 shrink-0" />
+          <span className="truncate">
+            {sourcePath}
+            {sourceLine ? `:${sourceLine}` : ""}
           </span>
-        )}
-        <Button
-          size="sm"
-          variant="ghost"
-          className="ml-auto h-6 px-2"
-          onClick={onDismiss}
-        >
-          <XIcon className="size-3.5" />
-        </Button>
-      </div>
+        </span>
+      )}
 
-      <div className="relative rounded-lg border p-2 transition-colors focus-within:border-primary">
-        <TextareaAutosize
-          ref={inputRef}
-          minRows={1}
-          maxRows={5}
-          value={instruction}
-          disabled={isSubmitting}
-          onChange={(e) => setInstruction(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          placeholder="Describe the change to this element…"
-          className="w-full resize-none bg-transparent pr-10 text-sm outline-none disabled:opacity-60"
-        />
-        <Button
-          size="sm"
-          className="absolute bottom-2 right-2 size-7 p-0"
-          disabled={!instruction.trim() || isSubmitting}
-          onClick={submit}
-        >
-          {isSubmitting ? (
-            <Loader2Icon className="size-3.5 animate-spin" />
-          ) : (
-            <CornerDownLeftIcon className="size-3.5" />
-          )}
-        </Button>
-      </div>
+      <span className="ml-auto hidden shrink-0 items-center gap-1 text-xs text-muted-foreground md:flex">
+        <ArrowLeftIcon className="size-3" />
+        Describe the change in the chat
+      </span>
 
-      <p className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground">
-        <SparklesIcon className="size-3" />
-        Only this element will be changed.
-      </p>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="ml-auto h-6 shrink-0 px-2 md:ml-2"
+        onClick={onDismiss}
+        aria-label="Clear selection"
+      >
+        <XIcon className="size-3.5" />
+      </Button>
     </div>
   );
 };

@@ -5,7 +5,6 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-import { useTheme } from "next-themes";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import {
   ChevronDownIcon,
@@ -14,7 +13,6 @@ import {
   DownloadIcon,
   Loader2Icon,
   PencilIcon,
-  SunMoonIcon,
   Trash2Icon,
 } from "lucide-react";
 
@@ -25,13 +23,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuPortal,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -52,10 +44,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-import { HistoryDialog } from "./history-dialog";
-import { ModelPicker } from "./model-picker";
-import { TokenMeter } from "./token-meter";
-
 interface Props {
   projectId: string;
 }
@@ -64,7 +52,6 @@ export const ProjectHeader = ({ projectId }: Props) => {
   const trpc = useTRPC();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { setTheme, theme } = useTheme();
 
   const { data: project } = useSuspenseQuery(
     trpc.projects.getOne.queryOptions({ id: projectId }),
@@ -106,15 +93,15 @@ export const ProjectHeader = ({ projectId }: Props) => {
   });
 
   return (
-    <header className="flex items-center justify-between gap-2 border-b p-2">
+    <header className="project-header flex min-w-0 items-center gap-2 overflow-hidden border-b bg-white/95 p-2 backdrop-blur-xl dark:bg-zinc-950/95">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
             size="sm"
-            className="min-w-0 pl-2! transition-opacity focus-visible:ring-0 hover:bg-transparent hover:opacity-75"
+            className="min-w-0 flex-1 justify-start overflow-hidden pl-2! transition-opacity focus-visible:ring-0 hover:bg-transparent hover:opacity-75"
           >
-            <Image src="/logo.svg" alt="Vibe" width={18} height={18} />
+            <Image src="/brand/vibe-mark.png" alt="Vibe" width={18} height={18} />
             <span className="truncate text-sm font-medium">{project.name}</span>
             <ChevronDownIcon className="shrink-0" />
           </Button>
@@ -164,24 +151,6 @@ export const ProjectHeader = ({ projectId }: Props) => {
 
           <DropdownMenuSeparator />
 
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger className="gap-2">
-              <SunMoonIcon className="size-4 text-muted-foreground" />
-              <span>Appearance</span>
-            </DropdownMenuSubTrigger>
-            <DropdownMenuPortal>
-              <DropdownMenuSubContent>
-                <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
-                  <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuPortal>
-          </DropdownMenuSub>
-
-          <DropdownMenuSeparator />
-
           <DropdownMenuItem
             variant="destructive"
             onSelect={() => setDeleteOpen(true)}
@@ -191,12 +160,6 @@ export const ProjectHeader = ({ projectId }: Props) => {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-
-      <div className="flex shrink-0 items-center gap-1">
-        <TokenMeter projectId={projectId} />
-        <HistoryDialog projectId={projectId} />
-        <ModelPicker projectId={projectId} />
-      </div>
 
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent className="sm:max-w-sm">

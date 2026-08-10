@@ -36,8 +36,12 @@ let mode: VibeMode = "off";
 let hoveredEl: Element | null = null;
 let selectedEl: Element | null = null;
 let editingEl: HTMLElement | null = null;
+let editingTextNode: Text | null = null;
+let editingLocator: VibeElementLocator | null = null;
 let editingOriginal = "";
+let editingOriginalNodeValue = "";
 let started = false;
+const optimisticOriginals = new Map<string, string>();
 
 // ---------------------------------------------------------------------------
 // Transport
@@ -200,12 +204,69 @@ function targetFrom(event: Event): Element | null {
     }
   }
   const target = event.target;
-  return target instanceof Element && !isVibeUi(target) ? target : null;
+  return target instanceof Element &&
+    target.tagName !== "HTML" &&
+    target.tagName !== "BODY" &&
+    !isVibeUi(target)
+    ? target
+    : null;
+}
+
+type CaretDocument = Document & {
+  caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  caretRangeFromPoint?: (x: number, y: number) => Range | null;
+};
+
+/**
+ * Return the element owning the actual text glyph under the pointer.
+ *
+ * Event targeting can report <body> when generated CSS uses pointer-events or
+ * decorative layers. Caret hit-testing resolves the rendered character instead
+ * and prevents a direct edit from accidentally targeting the whole document.
+ */
+function textTargetFromPoint(event: MouseEvent | PointerEvent): HTMLElement | null {
+  const doc = document as CaretDocument;
+  let node: Node | null = null;
+  let offset = 0;
+
+  const position = doc.caretPositionFromPoint?.(event.clientX, event.clientY);
+  if (position) {
+    node = position.offsetNode;
+    offset = position.offset;
+  } else {
+    const range = doc.caretRangeFromPoint?.(event.clientX, event.clientY);
+    if (range) {
+      node = range.startContainer;
+      offset = range.startOffset;
+    }
+  }
+
+  if (!node || node.nodeType !== Node.TEXT_NODE || !node.nodeValue?.trim()) return null;
+
+  // A caret API may return the nearest character even over empty space. Require
+  // the pointer to be on that character's painted box (with a tiny touch margin).
+  const length = node.nodeValue.length;
+  const charOffset = Math.max(0, Math.min(offset, length - 1));
+  const charRange = document.createRange();
+  charRange.setStart(node, charOffset);
+  charRange.setEnd(node, Math.min(charOffset + 1, length));
+  const onGlyph = Array.from(charRange.getClientRects()).some(
+    (rect) =>
+      event.clientX >= rect.left - 3 &&
+      event.clientX <= rect.right + 3 &&
+      event.clientY >= rect.top - 3 &&
+      event.clientY <= rect.bottom + 3,
+  );
+  if (!onGlyph) return null;
+
+  const el = node.parentElement;
+  if (!el || isVibeUi(el) || el.tagName === "HTML" || el.tagName === "BODY") return null;
+  return el;
 }
 
 function onPointerMove(event: PointerEvent) {
   if (mode === "off" || editingEl) return;
-  const el = targetFrom(event);
+  const el = mode === "text-edit" ? textTargetFromPoint(event) : targetFrom(event);
   if (el === hoveredEl) return;
   hoveredEl = el;
   repaint();
@@ -223,7 +284,7 @@ function onClick(event: MouseEvent) {
   if (mode === "off") return;
   if (editingEl && editingEl.contains(event.target as Node)) return;
 
-  const el = targetFrom(event);
+  const el = mode === "text-edit" ? textTargetFromPoint(event) : targetFrom(event);
   if (!el) return;
 
   // In inspect/edit mode the page's own click handlers must not fire — the user
@@ -240,8 +301,8 @@ function onClick(event: MouseEvent) {
 
 function onDoubleClick(event: MouseEvent) {
   if (mode !== "text-edit") return;
-  const el = targetFrom(event);
-  if (!el || !(el instanceof HTMLElement)) return;
+  const el = textTargetFromPoint(event);
+  if (!el) return;
 
   event.preventDefault();
   event.stopPropagation();
@@ -251,15 +312,25 @@ function onDoubleClick(event: MouseEvent) {
 function beginEdit(el: HTMLElement) {
   if (editingEl) commitEdit();
 
+  // Edit one direct text node, not the element's full textContent. Selecting a
+  // button label must not delete its icon or nested markup when the user types.
+  const textNodes = Array.from(el.childNodes).filter(
+    (node): node is Text => node.nodeType === Node.TEXT_NODE && !!node.nodeValue?.trim(),
+  );
+  if (textNodes.length !== 1) return;
+
   editingEl = el;
-  editingOriginal = (el.textContent ?? "").trim();
+  editingTextNode = textNodes[0];
+  editingLocator = buildLocator(el);
+  editingOriginalNodeValue = editingTextNode.nodeValue ?? "";
+  editingOriginal = editingOriginalNodeValue.trim();
   el.setAttribute("contenteditable", "plaintext-only");
   el.setAttribute("spellcheck", "false");
   el.focus();
 
-  // Select the whole text so typing replaces it.
+  // Select only the label so nested icons and elements survive the edit.
   const range = document.createRange();
-  range.selectNodeContents(el);
+  range.selectNodeContents(editingTextNode);
   const selection = window.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(range);
@@ -296,22 +367,30 @@ function teardownEdit(el: HTMLElement) {
 
 function commitEdit() {
   const el = editingEl;
-  if (!el) return;
+  const textNode = editingTextNode;
+  const locator = editingLocator;
+  if (!el || !textNode || !locator) return;
   editingEl = null;
+  editingTextNode = null;
+  editingLocator = null;
 
-  const next = (el.textContent ?? "").trim();
+  const next = (textNode.nodeValue ?? "").trim();
   teardownEdit(el);
 
   if (next === editingOriginal) {
-    post({ type: "vibe:textEditCancelled", nodeId: buildLocator(el).nodeId });
+    post({ type: "vibe:textEditCancelled", nodeId: locator.nodeId });
     return;
   }
 
   // The DOM already shows the new text; the parent persists it and Fast Refresh
   // makes it authoritative. On failure the parent tells us to revert.
+  optimisticOriginals.set(locator.nodeId, editingOriginalNodeValue);
   post({
     type: "vibe:textEdit",
-    locator: buildLocator(el),
+    // This must describe the source as it looked before the user typed. A
+    // locator built from the optimistic DOM contains the new text, which does
+    // not exist in source yet and makes static HTML impossible to resolve.
+    locator,
     oldText: editingOriginal,
     newText: next,
   });
@@ -319,11 +398,15 @@ function commitEdit() {
 
 function cancelEdit() {
   const el = editingEl;
-  if (!el) return;
+  const textNode = editingTextNode;
+  const locator = editingLocator;
+  if (!el || !textNode || !locator) return;
   editingEl = null;
-  el.textContent = editingOriginal;
+  editingTextNode = null;
+  editingLocator = null;
+  textNode.nodeValue = editingOriginalNodeValue;
   teardownEdit(el);
-  post({ type: "vibe:textEditCancelled", nodeId: buildLocator(el).nodeId });
+  post({ type: "vibe:textEditCancelled", nodeId: locator.nodeId });
 }
 
 function setMode(next: VibeMode) {
@@ -442,12 +525,25 @@ function onParentMessage(event: MessageEvent) {
     }
     case "vibe:revertOptimistic": {
       const el = lookupNode(data.nodeId);
-      if (el && editingOriginal) el.textContent = editingOriginal;
+      const original = optimisticOriginals.get(data.nodeId);
+      if (el && original !== undefined) {
+        const textNode = Array.from(el.childNodes).find(
+          (node): node is Text => node.nodeType === Node.TEXT_NODE && !!node.nodeValue?.trim(),
+        );
+        if (textNode) textNode.nodeValue = original;
+      }
+      optimisticOriginals.delete(data.nodeId);
       break;
     }
     case "vibe:applyOptimisticText": {
       const el = lookupNode(data.nodeId);
-      if (el) el.textContent = data.text;
+      if (el) {
+        const textNode = Array.from(el.childNodes).find(
+          (node): node is Text => node.nodeType === Node.TEXT_NODE && !!node.nodeValue?.trim(),
+        );
+        if (textNode) textNode.nodeValue = data.text;
+      }
+      optimisticOriginals.delete(data.nodeId);
       break;
     }
     case "vibe:navigate":

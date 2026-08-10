@@ -76,6 +76,9 @@ function injectInspector(html) {
 
 const server = http.createServer((req, res) => {
   const pathname = url.parse(req.url || "/").pathname || "/";
+  // Lets the control plane distinguish this server from the Next scaffold an
+  // older sandbox template may still have running on the same port.
+  res.setHeader("x-vibe-static-server", "1");
 
   if (pathname === INSPECTOR_PATH) {
     const bundle = "/home/user/vibe/inspector.bundle.js";

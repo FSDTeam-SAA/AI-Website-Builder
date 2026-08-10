@@ -26,16 +26,16 @@ const OPTIONS: {
   icon: React.ElementType;
 }[] = [
   {
-    id: "NEXTJS",
-    label: "React app",
-    description: "Next.js, Tailwind, shadcn/ui — for interactive apps",
-    icon: CodeIcon,
-  },
-  {
     id: "STATIC_HTML",
     label: "HTML site",
     description: "Plain HTML, CSS and JS — fast, simple, no build step",
     icon: FileCodeIcon,
+  },
+  {
+    id: "NEXTJS",
+    label: "React app",
+    description: "Next.js, Tailwind, shadcn/ui — for interactive apps",
+    icon: CodeIcon,
   },
 ];
 
