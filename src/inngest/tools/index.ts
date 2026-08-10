@@ -53,6 +53,22 @@ export interface ToolContext {
   touched: Record<string, string>;
   /** Live preview URL, so the agent can verify its own work. */
   previewUrl?: string;
+  /**
+   * How long to let the app settle before reading its log. Zero for frameworks
+   * that serve straight off disk and so have nothing to recompile.
+   */
+  settleMs?: number;
+  /** Whether npm manifests belong to this project. Assumed true when unset. */
+  usesNpm?: boolean;
+  /** Framework file root ("site" for static). Applied to every tool path. */
+  fileRoot?: string;
+  /**
+   * Bumped on every write, and recorded by `checkApp` when its verdict was
+   * clean. Equal values mean nothing has changed since a passing check, which
+   * lets the post-run repair pass skip a duplicate health check.
+   */
+  writeSeq?: number;
+  verifiedAtSeq?: number;
   /** Monotonic sequence for ordering activity events. */
   emit: (
     type: "STATUS" | "THINKING" | "TOOL_CALL" | "TOOL_RESULT" | "FILE_WRITE" | "TERMINAL" | "ERROR" | "DONE",
@@ -87,6 +103,23 @@ export function createAgentEventEmitter(projectId: string, messageId?: string) {
   };
 }
 
+/**
+ * Resolve a model-supplied path to where the file actually lives.
+ *
+ * A static project is rooted at `site/` so it cannot mix with the Next scaffold
+ * the template image ships — but that prefix is an implementation detail, and
+ * the model omits it as often as not. It used to get away with it only because
+ * the seed files carried the prefix and it copied them; asked to write a new
+ * file it produced `index.html`, which the static server never serves. Applying
+ * the root here makes the placement independent of what the model guessed.
+ */
+function resolvePath(ctx: ToolContext, path: string): string {
+  const key = normalizeFilePath(path);
+  const root = ctx.fileRoot;
+  if (!key || !root) return key;
+  return key === root || key.startsWith(`${root}/`) ? key : `${root}/${key}`;
+}
+
 function truncate(value: string, max = MAX_OUTPUT): string {
   if (value.length <= max) return value;
   return `${value.slice(0, max)}\n… [truncated ${value.length - max} characters]`;
@@ -115,6 +148,7 @@ async function persistWrites(
 
   await writeFilesToSandbox(ctx.sandbox, patch);
   await mergeProjectFiles(ctx.projectId, patch);
+  ctx.writeSeq = (ctx.writeSeq ?? 0) + 1;
 
   for (const [path, content] of Object.entries(patch)) {
     ctx.files[path] = content;
@@ -174,7 +208,7 @@ export function createTerminalTool(ctx: ToolContext) {
         // is what a future rehydrate replays, and it must include whatever
         // dependencies were just added.
         if (/\b(?:npm|yarn|pnpm|bun)\b.*\b(?:install|add|remove|uninstall)\b/.test(command)) {
-          await syncManifests(ctx);
+          await syncManifests(ctx, { usesNpm: ctx.usesNpm !== false });
         }
 
         const output = result.stdout || result.stderr || "(no output)";
@@ -193,12 +227,24 @@ export function createTerminalTool(ctx: ToolContext) {
 }
 
 /** Pull package.json / package-lock.json back out of the sandbox into the tree. */
-export async function syncManifests(ctx: ToolContext): Promise<void> {
+export async function syncManifests(
+  ctx: ToolContext,
+  opts: { usesNpm: boolean },
+): Promise<void> {
+  // A static site has no npm manifests of its own. Reading them anyway pulled
+  // the template image's Next scaffold — including a ~700KB lockfile — into the
+  // project tree on every single run.
+  if (!opts.usesNpm) return;
+
   const patch: Record<string, string> = {};
   for (const name of ["package.json", "package-lock.json"]) {
     try {
       const content = await ctx.sandbox.files.read(toSandboxPath(name));
-      if (typeof content === "string") patch[name] = content;
+      // Unchanged manifests are the normal case. Merging them regardless
+      // rewrote the whole file tree jsonb and bumped filesVersion for nothing.
+      if (typeof content === "string" && ctx.files[name] !== content) {
+        patch[name] = content;
+      }
     } catch {
       // Not present — nothing to reconcile.
     }
@@ -219,7 +265,7 @@ export function createListFilesTool(ctx: ToolContext) {
       dir: z.string().nullable().describe('Directory to list, e.g. "app". Pass null for all.'),
     }),
     handler: async ({ dir }) => {
-      const prefix = dir ? `${normalizeFilePath(dir)}/` : "";
+      const prefix = dir ? `${resolvePath(ctx, dir)}/` : ctx.fileRoot ? `${ctx.fileRoot}/` : "";
       const paths = Object.keys(ctx.files)
         .filter((p) => p.startsWith(prefix))
         // Vendored shadcn primitives are noise; the model already knows them.
@@ -273,7 +319,7 @@ export function createReadFileTool(ctx: ToolContext) {
       endLine: z.number().int().min(1).nullable(),
     }),
     handler: async ({ path, startLine, endLine }) => {
-      const key = normalizeFilePath(path);
+      const key = resolvePath(ctx, path);
       let content = ctx.files[key];
 
       if (content === undefined) {
@@ -308,7 +354,7 @@ export function createWriteFileTool(ctx: ToolContext) {
       content: z.string(),
     }),
     handler: async ({ path, content }) => {
-      const key = normalizeFilePath(path);
+      const key = resolvePath(ctx, path);
       if (!key) return "ERROR: empty path.";
       if (isProtectedPath(key)) {
         return `ERROR: ${key} is managed by the platform and is read-only. Do not modify it.`;
@@ -342,7 +388,7 @@ export function createEditFileTool(ctx: ToolContext) {
         .max(20),
     }),
     handler: async ({ path, edits }) => {
-      const key = normalizeFilePath(path);
+      const key = resolvePath(ctx, path);
       if (isProtectedPath(key)) {
         return `ERROR: ${key} is managed by the platform and is read-only. Do not modify it.`;
       }
@@ -405,7 +451,7 @@ export function createOrUpdateFilesTool(ctx: ToolContext) {
       const rejected: string[] = [];
 
       for (const file of files) {
-        const key = normalizeFilePath(file.path);
+        const key = resolvePath(ctx, file.path);
         if (!key) continue;
         if (isProtectedPath(key)) {
           rejected.push(key);
@@ -440,9 +486,14 @@ export function createCheckAppTool(ctx: ToolContext) {
       }
 
       await ctx.emit("STATUS", "Checking the app compiles");
-      const report = await checkAppHealth(ctx.sandbox, ctx.previewUrl);
+      const report = await checkAppHealth(ctx.sandbox, ctx.previewUrl, {
+        settleMs: ctx.settleMs,
+      });
 
       if (report.ok) {
+        // Lets the automatic repair pass skip re-checking an app the agent
+        // already proved healthy, as long as nothing was written since.
+        ctx.verifiedAtSeq = ctx.writeSeq ?? 0;
         await ctx.emit("TOOL_RESULT", "App compiles and renders");
         return "OK — the app compiles and the page renders. You may finish.";
       }

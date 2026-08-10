@@ -180,7 +180,10 @@ export function ownTextOf(el: Element): string | null {
  */
 export function textIsLiteralFor(el: Element): boolean {
   const props = getHostProps(el);
-  if (!props) return false;
+  // Plain HTML projects do not have React props. Their direct text nodes are
+  // still literal and can be safely offered to the deterministic HTML editor;
+  // the server verifies the exact source occurrence before changing anything.
+  if (!props) return ownTextOf(el) !== null;
   return typeof props.children === "string" && props.children.trim().length > 0;
 }
 

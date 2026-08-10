@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { GaugeIcon, InfoIcon } from "lucide-react";
 
-import { cn } from "@/lib/utils";
 import { useTRPC } from "@/trpc/client";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -14,7 +13,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { formatCost, formatTokens } from "@/lib/ai/format";
+import { formatTokens } from "@/lib/ai/format";
 
 interface Props {
   projectId: string;
@@ -26,11 +25,63 @@ function barTone(pct: number): string {
   return "bg-primary";
 }
 
+/** "0%" for genuinely nothing, "<1%" for a real but tiny amount. */
+function formatPercent(pct: number): string {
+  const percent = Math.min(100, pct * 100);
+  if (percent <= 0) return "0%";
+  if (percent < 1) return "<1%";
+  return `${Math.round(percent)}%`;
+}
+
 /**
- * Token and context burn.
+ * A 0.1% fill is a sub-pixel sliver — indistinguishable from empty. Floor it to
+ * a hairline so "a little" never renders as "none".
+ */
+function barValue(pct: number): number {
+  const percent = Math.min(100, pct * 100);
+  return percent <= 0 ? 0 : Math.max(1.5, percent);
+}
+
+interface MeterProps {
+  label: string;
+  used: number;
+  limit: number;
+  pct: number;
+  caption?: string;
+}
+
+/**
+ * One labelled consumption bar.
+ *
+ * The track is explicitly neutral. The stock `bg-primary/20` is a tint of the
+ * brand colour, which at these fill levels made an empty bar look like a full
+ * one — every window appeared maxed out when they were all under 2%.
+ */
+const Meter = ({ label, used, limit, pct, caption }: MeterProps) => (
+  <div>
+    <div className="mb-1 flex items-baseline justify-between gap-2">
+      <span className="text-xs font-medium">{label}</span>
+      <span className="font-mono text-[11px] font-medium">{formatPercent(pct)}</span>
+    </div>
+    <Progress
+      value={barValue(pct)}
+      className="h-1.5 bg-muted"
+      indicatorClassName={barTone(pct)}
+    />
+    <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+      {formatTokens(used)} of {formatTokens(limit)} tokens
+    </p>
+    {caption && <p className="mt-0.5 text-[11px] text-muted-foreground">{caption}</p>}
+  </div>
+);
+
+/**
+ * Token burn.
  *
  * Counts come from the providers' own usage objects on each response, not from
- * character estimates, so what this shows is what was actually billed.
+ * character estimates, so what this shows is what was actually used. Tokens are
+ * the only unit here on purpose — a second number in dollars competed with the
+ * thing the meter exists to communicate.
  */
 export const TokenMeter = ({ projectId }: Props) => {
   const trpc = useTRPC();
@@ -48,7 +99,6 @@ export const TokenMeter = ({ projectId }: Props) => {
   if (!project) return null;
 
   const context = project.context;
-  const contextPct = context?.pct ?? 0;
 
   return (
     <Popover>
@@ -56,14 +106,13 @@ export const TokenMeter = ({ projectId }: Props) => {
         <Button
           size="sm"
           variant="ghost"
-          className="h-7 gap-1.5 px-2 font-mono text-xs"
+          className="composer-token h-7 gap-1.5 px-2 font-mono text-xs"
           aria-label="Token usage"
         >
           <GaugeIcon className="size-3.5 text-muted-foreground" />
+          {/* Labelled: a bare "11k" gave no clue what was being counted. */}
           <span>{formatTokens(project.total.tokens)}</span>
-          <span className="text-muted-foreground">
-            {formatCost(project.total.costUsd)}
-          </span>
+          <span className="text-muted-foreground">tokens</span>
         </Button>
       </PopoverTrigger>
 
@@ -71,31 +120,23 @@ export const TokenMeter = ({ projectId }: Props) => {
         <div className="space-y-3 p-4">
           <div>
             <p className="text-sm font-medium">This project</p>
-            <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+            <p className="mt-1 font-mono text-2xl leading-none">
+              {formatTokens(project.total.tokens)}
+            </p>
+            <p className="mt-1.5 font-mono text-xs text-muted-foreground">
               {formatTokens(project.total.promptTokens)} in ·{" "}
-              {formatTokens(project.total.completionTokens)} out ·{" "}
-              {formatCost(project.total.costUsd)} est.
+              {formatTokens(project.total.completionTokens)} out
             </p>
           </div>
 
           {context && (
-            <div>
-              <div className="mb-1 flex items-baseline justify-between">
-                <span className="text-xs font-medium">Context used</span>
-                <span className="font-mono text-[11px] text-muted-foreground">
-                  {formatTokens(context.used)} / {formatTokens(context.window)}
-                </span>
-              </div>
-              <Progress
-                value={contextPct * 100}
-                className="h-1.5"
-                indicatorClassName={barTone(contextPct)}
-              />
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Largest prompt on the last run, against {context.modelLabel}&apos;s
-                window.
-              </p>
-            </div>
+            <Meter
+              label="Context used"
+              used={context.used}
+              limit={context.window}
+              pct={context.pct}
+              caption={`Largest prompt on the last run, against ${context.modelLabel}'s window.`}
+            />
           )}
         </div>
 
@@ -113,37 +154,26 @@ export const TokenMeter = ({ projectId }: Props) => {
               </div>
 
               {windows.windows.map((w) => (
-                <div key={w.id}>
-                  <div className="mb-1 flex items-baseline justify-between">
-                    <span className="text-xs">{w.label}</span>
-                    <span className="font-mono text-[11px] text-muted-foreground">
-                      {formatTokens(w.tokens)} · {formatCost(w.costUsd)}
-                    </span>
-                  </div>
-                  <Progress
-                    value={w.pct * 100}
-                    className="h-1.5"
-                    indicatorClassName={barTone(w.pct)}
-                  />
-                  {w.runs > 0 && (
-                    <p className="mt-1 text-[10px] text-muted-foreground">
-                      {w.runs} run{w.runs === 1 ? "" : "s"} · frees up{" "}
-                      {formatDistanceToNow(w.resetsAt, { addSuffix: true })}
-                    </p>
-                  )}
-                </div>
+                <Meter
+                  key={w.id}
+                  label={w.label}
+                  used={w.tokens}
+                  limit={w.limit}
+                  pct={w.pct}
+                  caption={
+                    w.runs > 0
+                      ? `${w.runs} run${w.runs === 1 ? "" : "s"} · frees up ${formatDistanceToNow(
+                          w.resetsAt,
+                          { addSuffix: true },
+                        )}`
+                      : undefined
+                  }
+                />
               ))}
 
-              <p
-                className={cn(
-                  "flex items-start gap-1.5 rounded-md bg-muted p-2 text-[11px] leading-relaxed text-muted-foreground",
-                )}
-              >
+              <p className="flex items-start gap-1.5 rounded-md bg-muted p-2 text-[11px] leading-relaxed text-muted-foreground">
                 <InfoIcon className="mt-0.5 size-3 shrink-0" />
-                <span>
-                  Limits are shown but not applied. Costs are estimates from a
-                  local price table, not provider billing.
-                </span>
+                <span>Limits are shown but not applied.</span>
               </p>
             </div>
           </>

@@ -113,9 +113,16 @@ export const HistoryDialog = ({ projectId }: Props) => {
     <>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
-          <Button size="sm" variant="ghost" className="h-7 px-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="composer-history h-7 px-2"
+            aria-label="Project history"
+          >
             <HistoryIcon className="size-4" />
-            <span className="hidden lg:inline">History</span>
+            {/* Shown by default; the composer's container query drops it when
+                the panel gets narrow, which a viewport breakpoint cannot see. */}
+            <span className="composer-history-label">History</span>
           </Button>
         </DialogTrigger>
 

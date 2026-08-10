@@ -12,7 +12,7 @@ import { createCheckpoint } from "@/lib/checkpoints";
 import { describeAttachments } from "@/lib/ai/vision";
 import { reconcileSandboxFiles } from "@/lib/sandbox/reconcile";
 import { ensureSandbox, connectIfAlive } from "@/lib/sandbox/manager";
-import { getProjectFiles } from "@/lib/project-files";
+import { getProjectFiles, type ProjectFiles } from "@/lib/project-files";
 import { buildCodeMap, renderCodeMap } from "@/lib/code-map";
 import {
   CODE_AGENT_PROMPT,
@@ -20,9 +20,10 @@ import {
   RESPONSE_PROMPT,
   STATIC_HTML_PROMPT,
 } from "@/prompts";
-import { frameworkConfig } from "@/lib/framework";
+import { frameworkConfig, type FrameworkConfig } from "@/lib/framework";
 
 import { inngest } from "../client";
+import { withoutStepTools } from "../als";
 import { verifyAndRepair } from "../repair";
 import {
   buildAgentTools,
@@ -30,7 +31,11 @@ import {
   syncManifests,
   type ToolContext,
 } from "../tools";
-import { extractTaskSummary, lastAssistantTextMessageContent, parseAgentOutput } from "../utils";
+import {
+  lastAssistantTextMessageContent,
+  parseAgentOutput,
+  resolveCompletion,
+} from "../utils";
 
 interface AgentState {
   summary: string;
@@ -38,6 +43,22 @@ interface AgentState {
 
 const MAX_ITERATIONS = 20;
 const MEMORY_WINDOW = 8;
+
+/**
+ * Is this tree still exactly the placeholder a new project is created with?
+ *
+ * Distinguishes "first build" from "edit an existing app", which decides whether
+ * the prompt carries a code map and tells the model to make a targeted change.
+ */
+function isPristineSeed(files: ProjectFiles, fw: FrameworkConfig): boolean {
+  const seed = fw.seedFiles;
+  if (!seed) return Object.keys(files).length === 0;
+
+  const paths = Object.keys(files);
+  if (paths.length === 0) return true;
+  if (paths.length !== Object.keys(seed).length) return false;
+  return paths.every((path) => files[path] === seed[path]);
+}
 
 async function loadConversation(projectId: string): Promise<Message[]> {
   const rows = await prisma.message.findMany({
@@ -137,17 +158,25 @@ export const codeAgentFunction = inngest.createFunction(
       return { sandboxId: session.sandboxId, url: session.url };
     });
 
-    // 2. The agent loop. Deliberately NOT wrapped in step.run: agent-kit opens
-    //    its own Inngest steps internally, and nesting them inside ours triggers
-    //    NESTING_STEPS and breaks memoisation. Tools likewise do not open steps —
-    //    the original code gave every call of a tool the same step name, so
-    //    Inngest replayed the first result for all of them.
-    const outcome = await (async () => {
+    // 2. The agent loop, as one durable unit.
+    //
+    //    One step, run with step tooling hidden (see `withoutStepTools`). Both
+    //    halves matter: at the top level agent-kit's per-inference steps all
+    //    share one id, so Inngest memoised iteration 1 and replayed it forever;
+    //    nested inside a step without the escape, its `step.ai.infer` call can
+    //    never be settled and the run hangs on its first inference.
+    const outcome = await step.run("run-agent", () => withoutStepTools(async () => {
       const sandbox = await connectIfAlive(sandboxInfo.sandboxId);
       if (!sandbox) throw new Error("Lost connection to the preview sandbox");
 
       const { files } = await getProjectFiles(projectId);
-      const isExistingApp = Object.keys(files).length > 0;
+
+      const project = await prisma.project.findUnique({
+        where: { id: projectId },
+        select: { modelId: true, framework: true },
+      });
+
+      const fw = frameworkConfig(project?.framework);
 
       const ctx: ToolContext = {
         projectId,
@@ -156,15 +185,19 @@ export const codeAgentFunction = inngest.createFunction(
         files: { ...files },
         touched: {},
         previewUrl: sandboxInfo.url,
+        // A static site is served straight off disk, so there is nothing to wait
+        // for after a write. Only a compiling framework needs the settle delay.
+        settleMs: fw.usesNpm ? undefined : 0,
+        usesNpm: fw.usesNpm,
+        fileRoot: fw.fileRoot || undefined,
         emit,
       };
 
-      const project = await prisma.project.findUnique({
-        where: { id: projectId },
-        select: { modelId: true, framework: true },
-      });
+      // An untouched seed is not an existing app. Treating it as one cost two
+      // extra round trips per new project: the agent dutifully read back its own
+      // placeholder index.html and main.css before writing anything.
+      const isExistingApp = !isPristineSeed(files, fw);
 
-      const fw = frameworkConfig(project?.framework);
       const codeSpec = resolveModelSpec("code", project?.modelId);
       const usage = new UsageAccumulator();
 
@@ -181,8 +214,10 @@ export const codeAgentFunction = inngest.createFunction(
             usage.recordRaw("Code agent", codeSpec, result.raw);
 
             const text = lastAssistantTextMessageContent(result);
-            const summary = extractTaskSummary(text);
-            if (summary && network) network.state.data.summary = summary;
+            if (network) {
+              const summary = resolveCompletion(text, result, ctx.touched);
+              if (summary) network.state.data.summary = summary;
+            }
             return result;
           },
         },
@@ -223,10 +258,17 @@ export const codeAgentFunction = inngest.createFunction(
         sections.push(
           "This app already exists. Inspect the relevant files and make a targeted change.",
         );
+      } else {
+        // Without this the model opened the placeholder files first to see what
+        // it was working with — two round trips to learn they say nothing.
+        sections.push(
+          "This is a brand new project. Any existing files are empty placeholders " +
+            "with no content worth keeping — overwrite them directly, and do not " +
+            "read them first.",
+        );
       }
 
-      const prompt =
-        sections.length === 1 && !imageSpec ? value : sections.join("\n\n");
+      const prompt = sections.join("\n\n");
 
       await emit("STATUS", isExistingApp ? "Reading your project" : "Designing your app");
 
@@ -250,8 +292,8 @@ export const codeAgentFunction = inngest.createFunction(
       // `npx shadcn add`, scaffolding CLIs, and the npm manifests — exists only
       // in the sandbox until this runs. Without it the next rehydrate destroys
       // that work.
-      await syncManifests(ctx);
-      const reconciled = await reconcileSandboxFiles(sandbox, projectId, ctx.files).catch(
+      await syncManifests(ctx, { usesNpm: fw.usesNpm });
+      const reconciled = await reconcileSandboxFiles(sandbox, projectId, ctx.files, { fileRoot: fw.fileRoot }).catch(
         () => null,
       );
       if (reconciled?.imported.length) {
@@ -270,7 +312,7 @@ export const codeAgentFunction = inngest.createFunction(
           detail: usage.detail(),
         },
       };
-    })();
+    }));
 
     const succeeded =
       !!outcome.summary && Object.keys(outcome.touched ?? {}).length > 0;
@@ -301,7 +343,7 @@ export const codeAgentFunction = inngest.createFunction(
 
     // 3. Title + reply. Only reached on success — the original ran both of these
     //    model calls before checking for failure, paying for them every time.
-    const { title, reply, summaryUsage } = await (async () => {
+    const { title, reply, summaryUsage } = await step.run("summarise", () => withoutStepTools(async () => {
       const fast = getModel("fast");
       const fastSpec = resolveModelSpec("fast");
       const usage = new UsageAccumulator();
@@ -332,23 +374,17 @@ export const codeAgentFunction = inngest.createFunction(
         reply: parseAgentOutput(replyOut.output, "Here's what I built for you."),
         summaryUsage: { ...usage.totals(), detail: usage.detail() },
       };
-    })();
+    }));
 
     await step.run("save-result", async () => {
       const { filesVersion } = await getProjectFiles(projectId);
-
-      // Snapshot before the turn is considered done, so this state is always
-      // recoverable even if the next turn goes badly.
-      await createCheckpoint(projectId, { kind: "TURN", label: title, messageId }).catch(
-        () => null,
-      );
 
       const promptTokens = outcome.usage.promptTokens + summaryUsage.promptTokens;
       const completionTokens =
         outcome.usage.completionTokens + summaryUsage.completionTokens;
       const costUsd = outcome.usage.costUsd + summaryUsage.costUsd;
 
-      await prisma.message.create({
+      const assistantMessage = await prisma.message.create({
         data: {
           projectId,
           content: reply,
@@ -377,6 +413,16 @@ export const codeAgentFunction = inngest.createFunction(
           },
         },
       });
+
+      // Snapshot before the turn is considered done, so this state is always
+      // recoverable even if the next turn goes badly. Hung off the assistant
+      // message rather than the prompt that triggered it: the chat offers the
+      // revert on the reply, which is where the user sees the result.
+      await createCheckpoint(projectId, {
+        kind: "TURN",
+        label: title,
+        messageId: assistantMessage.id,
+      }).catch(() => null);
 
       await prisma.project.update({
         where: { id: projectId },

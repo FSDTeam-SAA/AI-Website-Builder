@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -9,6 +9,7 @@ import { useTRPC } from "@/trpc/client";
 import type { VibeElementLocator } from "@/modules/preview/protocol";
 import { usePreviewBridge, type ConsoleEntry } from "@/modules/preview/hooks/use-preview-bridge";
 import { useSandboxSession } from "@/modules/preview/hooks/use-sandbox-session";
+import { usePreviewWorkspace } from "@/modules/preview/workspace-context";
 
 import { PreviewConsole } from "./preview-console";
 import { PreviewToolbar, DEVICE_PRESETS, type DevicePreset } from "./preview-toolbar";
@@ -17,9 +18,17 @@ import { SelectionPanel } from "./selection-panel";
 
 interface Props {
   projectId: string;
+  /**
+   * Bumped by the parent whenever the app on disk has changed — a finished run,
+   * or the user picking a fragment. The iframe `src` is the sandbox URL, which
+   * never changes, so React has no reason to re-render it and the frame kept
+   * showing whatever it loaded at boot: for a brand new project, the empty
+   * placeholder page.
+   */
+  reloadSignal?: number;
 }
 
-export const PreviewPanel = ({ projectId }: Props) => {
+export const PreviewPanel = ({ projectId, reloadSignal = 0 }: Props) => {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -29,8 +38,19 @@ export const PreviewPanel = ({ projectId }: Props) => {
   const [zoom, setZoom] = useState(1);
   const [consoleOpen, setConsoleOpen] = useState(false);
 
-  const { status, sandboxUrl, error, isWaking, wake, restart, invalidate } =
-    useSandboxSession(projectId);
+  const { setSelection, clearSelection, registerSelectionClear } = usePreviewWorkspace();
+
+  const {
+    status,
+    sandboxUrl,
+    error,
+    framework,
+    bootPhase,
+    isWaking,
+    wake,
+    restart,
+    invalidate,
+  } = useSandboxSession(projectId);
 
   const invalidateProject = useCallback(() => {
     queryClient.invalidateQueries({
@@ -75,6 +95,7 @@ export const PreviewPanel = ({ projectId }: Props) => {
         });
 
         if (result.status === "applied") {
+          bridge.applyOptimisticText(payload.locator.nodeId, payload.newText);
           invalidateProject();
           toast.success(`Updated ${result.path}`);
           return;
@@ -111,6 +132,43 @@ export const PreviewPanel = ({ projectId }: Props) => {
 
   const bridge = usePreviewBridge({ sandboxUrl, onTextEdit: handleTextEdit });
 
+  // Existing projects may still be attached to an older sandbox image whose
+  // page renders correctly but has no inspector bundle. If the handshake does
+  // not arrive, upgrade that runtime once and reload the frame. Normal previews
+  // never pay this E2B round-trip because they become ready before the timer.
+  const preparedRuntimeUrl = useRef<string | null>(null);
+  const prepareRuntime = useMutation({
+    ...trpc.preview.prepareRuntime.mutationOptions(),
+    onSuccess: (session) => {
+      invalidate();
+      if (session.status === "RUNNING") bridge.reload();
+    },
+  });
+  useEffect(() => {
+    if (status !== "RUNNING" || !sandboxUrl || bridge.state.ready) return;
+    if (preparedRuntimeUrl.current === sandboxUrl) return;
+
+    const timer = window.setTimeout(() => {
+      preparedRuntimeUrl.current = sandboxUrl;
+      prepareRuntime.mutate({ projectId });
+    }, 1_500);
+
+    return () => window.clearTimeout(timer);
+    // The mutation object itself is stable; depending on it causes avoidable
+    // timer resets when React Query updates mutation state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, sandboxUrl, bridge.state.ready, projectId]);
+
+  // Only on a *change*, so the history the activity stream replays on connect
+  // does not trigger a reload on every mount.
+  const lastReloadSignal = useRef(reloadSignal);
+  const reloadFrame = bridge.reload;
+  useEffect(() => {
+    if (reloadSignal === lastReloadSignal.current) return;
+    lastReloadSignal.current = reloadSignal;
+    reloadFrame();
+  }, [reloadSignal, reloadFrame]);
+
   const selected = bridge.state.selected;
 
   // Where the selected element lives, shown before the user commits to an edit.
@@ -122,6 +180,29 @@ export const PreviewPanel = ({ projectId }: Props) => {
     enabled: !!selected,
     staleTime: 30_000,
   });
+
+  // Publish the selection so the chat composer can attach it to the next
+  // message. The preview owns the postMessage channel, but the instruction for
+  // a selected element is typed on the other side of the screen.
+  useEffect(() => {
+    if (!selected) {
+      setSelection(null);
+      return;
+    }
+    setSelection({
+      locator: selected,
+      sourcePath: resolved?.best?.path ?? null,
+      sourceLine: resolved?.best?.line ?? null,
+    });
+  }, [selected, resolved, setSelection]);
+
+  // Dismissing from the chat has to reach the frame, which only this side can
+  // talk to.
+  const bridgeClearSelection = bridge.clearSelection;
+  useEffect(() => {
+    registerSelectionClear(bridgeClearSelection);
+    return () => registerSelectionClear(null);
+  }, [registerSelectionClear, bridgeClearSelection]);
 
   const errorCount = useMemo(
     () => bridge.state.consoleEntries.filter((e) => e.level === "error").length,
@@ -148,7 +229,7 @@ export const PreviewPanel = ({ projectId }: Props) => {
   const isLive = status === "RUNNING" && !!sandboxUrl;
 
   return (
-    <div ref={containerRef} className="flex h-full min-h-0 flex-col bg-background">
+    <div ref={containerRef} className="flex h-full min-h-0 flex-col bg-white dark:bg-zinc-950">
       <PreviewToolbar
         mode={bridge.mode}
         onModeChange={bridge.setMode}
@@ -213,6 +294,8 @@ export const PreviewPanel = ({ projectId }: Props) => {
           <SandboxStatus
             status={status}
             error={error}
+            framework={framework}
+            bootPhase={bootPhase}
             isWaking={isWaking}
             onWake={wake}
             onRestart={restart}
@@ -228,11 +311,7 @@ export const PreviewPanel = ({ projectId }: Props) => {
           locator={selected}
           sourcePath={resolved?.best?.path ?? null}
           sourceLine={resolved?.best?.line ?? null}
-          isSubmitting={requestAiEdit.isPending}
-          onDismiss={bridge.clearSelection}
-          onSubmit={(instruction) =>
-            requestAiEdit.mutate({ projectId, instruction, locator: selected })
-          }
+          onDismiss={clearSelection}
         />
       )}
 

@@ -9,7 +9,16 @@
  * The Vibe app overwrites this file when it boots a sandbox, injecting the real
  * deployment origin. It is on the agent's read-only deny list.
  */
-export const ALLOWED_PARENT_ORIGINS: string[] = [
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-];
+declare global {
+  interface Window {
+    /** Injected ahead of the prebuilt bundle for plain-HTML previews. */
+    __VIBE_ALLOWED_PARENT_ORIGINS__?: string[];
+  }
+}
+
+const defaults = ["http://localhost:3000", "http://127.0.0.1:3000"];
+
+export const ALLOWED_PARENT_ORIGINS: string[] =
+  typeof window !== "undefined" && Array.isArray(window.__VIBE_ALLOWED_PARENT_ORIGINS__)
+    ? window.__VIBE_ALLOWED_PARENT_ORIGINS__
+    : defaults;

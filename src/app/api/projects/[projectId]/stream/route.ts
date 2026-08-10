@@ -38,7 +38,15 @@ export async function GET(
   }
 
   const url = new URL(request.url);
-  let cursor = Number(url.searchParams.get("cursor") ?? 0) || 0;
+  // EventSource reconnects on its own and cannot carry a query string it did
+  // not open with, so the resume point has to come from `Last-Event-ID`.
+  // Without it every reconnect replayed the same tail and the activity list
+  // showed each step two or three times.
+  const resumeFrom = Number(request.headers.get("last-event-id") ?? "");
+  let cursor =
+    Number.isFinite(resumeFrom) && resumeFrom > 0
+      ? resumeFrom
+      : Number(url.searchParams.get("cursor") ?? 0) || 0;
 
   // Default to only new activity so opening a finished project doesn't replay
   // its entire history.
@@ -59,10 +67,13 @@ export async function GET(
       let closed = false;
       let lastBeat = Date.now();
 
-      const send = (event: string, data: unknown) => {
+      const send = (event: string, data: unknown, id?: number) => {
         if (closed) return;
         controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          encoder.encode(
+            `${id === undefined ? "" : `id: ${id}\n`}` +
+              `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
+          ),
         );
       };
 
@@ -98,13 +109,20 @@ export async function GET(
           if (events.length) {
             cursor = events[events.length - 1].seq;
             for (const event of events) {
-              send("activity", {
-                seq: event.seq,
-                type: event.type,
-                label: event.label,
-                detail: event.detail,
-                at: event.createdAt.toISOString(),
-              });
+              send(
+                "activity",
+                {
+                  seq: event.seq,
+                  type: event.type,
+                  label: event.label,
+                  detail: event.detail,
+                  // Which run this step belongs to, so the chat can show it
+                  // against the right turn instead of mixing in the last one.
+                  messageId: event.messageId,
+                  at: event.createdAt.toISOString(),
+                },
+                event.seq,
+              );
             }
             lastBeat = Date.now();
           } else if (Date.now() - lastBeat > HEARTBEAT_MS) {

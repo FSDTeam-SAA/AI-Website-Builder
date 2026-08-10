@@ -82,7 +82,7 @@ export const MODELS: readonly ModelSpec[] = [
     label: "GPT-5.6 Terra",
     roles: ["code", "edit"],
     tier: "standard",
-    description: "Default. Strong all-round code generation.",
+    description: "What \"Default\" picks. Strong all-round code generation.",
     maxTokens: 32000,
     contextWindow: 1_050_000,
     vision: true,

@@ -29,17 +29,19 @@ import {
  */
 
 /** Skip generated, vendored and platform directories. */
-const FIND_COMMAND = [
-  `find ${SANDBOX_ROOT} -type f`,
-  `-not -path '*/node_modules/*'`,
-  `-not -path '*/.next/*'`,
-  `-not -path '*/.git/*'`,
-  `-not -path '*/vibe/*'`,
-  `-not -path '*/.cache/*'`,
-  `-not -name '*.log'`,
-  `-size -256k`,
-  `-exec md5sum {} +`,
-].join(" ");
+function findCommand(root: string = SANDBOX_ROOT): string {
+  return [
+    `find ${root} -type f`,
+    `-not -path '*/node_modules/*'`,
+    `-not -path '*/.next/*'`,
+    `-not -path '*/.git/*'`,
+    `-not -path '*/vibe/*'`,
+    `-not -path '*/.cache/*'`,
+    `-not -name '*.log'`,
+    `-size -256k`,
+    `-exec md5sum {} +`,
+  ].join(" ");
+}
 
 const MAX_RECONCILED_FILES = 60;
 
@@ -58,9 +60,12 @@ function parseManifest(stdout: string): Manifest {
   return manifest;
 }
 
-export async function readSandboxManifest(sandbox: Sandbox): Promise<Manifest> {
+export async function readSandboxManifest(
+  sandbox: Sandbox,
+  root: string = SANDBOX_ROOT,
+): Promise<Manifest> {
   const result = await sandbox.commands
-    .run(FIND_COMMAND, { timeoutMs: 60_000 })
+    .run(findCommand(root), { timeoutMs: 60_000 })
     .catch(() => null);
   if (!result || result.exitCode !== 0) return {};
   return parseManifest(result.stdout);
@@ -130,8 +135,15 @@ export async function reconcileSandboxFiles(
   sandbox: Sandbox,
   projectId: string,
   knownFiles: ProjectFiles,
+  opts: { fileRoot?: string } = {},
 ): Promise<ReconcileResult> {
-  const manifest = await readSandboxManifest(sandbox);
+  // Scoped to the framework's own directory where it has one. A static project
+  // would otherwise hash the entire Next template on every run only to discard
+  // all of it below.
+  const manifest = await readSandboxManifest(
+    sandbox,
+    opts.fileRoot ? `${SANDBOX_ROOT}/${opts.fileRoot}` : SANDBOX_ROOT,
+  );
   const scanned = Object.keys(manifest).length;
   if (scanned === 0) return { scanned: 0, imported: [], skipped: 0 };
 
@@ -145,6 +157,14 @@ export async function reconcileSandboxFiles(
   let skipped = 0;
 
   for (const [path, hash] of Object.entries(manifest)) {
+    // A static project owns only its site directory. Without this the Next
+    // scaffold the image ships (package.json, tsconfig, app/) gets imported into
+    // a plain-HTML project and follows it around forever.
+    if (opts.fileRoot && !path.startsWith(`${opts.fileRoot}/`)) {
+      skipped++;
+      continue;
+    }
+
     // Platform files are ours, never the user's work.
     if (isProtectedPath(path) && path !== "package.json" && path !== "package-lock.json") {
       skipped++;

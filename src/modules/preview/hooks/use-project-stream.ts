@@ -18,6 +18,8 @@ export interface ActivityEvent {
     | "DONE";
   label: string;
   detail?: unknown;
+  /** The run (user message) this step belongs to; null on older rows. */
+  messageId?: string | null;
   at: string;
 }
 
@@ -49,7 +51,13 @@ export function useProjectStream(projectId: string, enabled = true) {
     source.addEventListener("activity", (event) => {
       try {
         const data = JSON.parse((event as MessageEvent).data) as ActivityEvent;
-        setEvents((prev) => [...prev, data].slice(-MAX_EVENTS));
+        // `seq` is unique per project, so this drops anything the server
+        // replayed after a reconnect instead of listing the step twice.
+        setEvents((prev) =>
+          prev.some((e) => e.seq === data.seq)
+            ? prev
+            : [...prev, data].slice(-MAX_EVENTS),
+        );
 
         if (data.type === "DONE" || data.type === "ERROR") {
           queryClient.invalidateQueries({
