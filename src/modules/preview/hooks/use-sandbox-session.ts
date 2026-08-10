@@ -82,6 +82,8 @@ export function useSandboxSession(projectId: string) {
   return {
     session,
     status,
+    framework: query.data?.framework ?? null,
+    bootPhase: session?.status === "CREATING" ? session.phase : null,
     isGenerating: query.data?.isGenerating ?? false,
     sandboxUrl: session?.status === "RUNNING" ? session.url : null,
     error: session?.status === "FAILED" ? session.error : null,

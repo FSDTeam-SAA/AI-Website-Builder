@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 
@@ -74,37 +74,46 @@ export const MessagesContainer = ({
   const lastMessage = messages[messages.length - 1];
   const isLastMessageUser = lastMessage?.role === "USER";
 
+  /**
+   * Steps belonging to the run in flight.
+   *
+   * The stream accumulates across runs within a session, so without scoping by
+   * run the block would replay the previous build's steps under the new prompt.
+   * Older rows predate the tag; falling back to the whole buffer keeps them
+   * visible rather than showing an empty block.
+   */
+  const runEvents = useMemo(() => {
+    if (!isLastMessageUser) return [];
+    const scoped = events.filter((event) => event.messageId === lastMessage.id);
+    return scoped.length > 0 ? scoped : events.filter((event) => !event.messageId);
+  }, [events, isLastMessageUser, lastMessage]);
+
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className="flex min-h-0 flex-1 flex-col bg-white dark:bg-zinc-950">
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="pt-2 pr-1">
           {messages.map((message) => (
             <MessageCard
               key={message.id}
-              content={message.content}
+              message={message}
               projectId={projectId}
-              attachments={message.attachments}
-              promptTokens={message.promptTokens}
-              completionTokens={message.completionTokens}
-              costUsd={message.costUsd}
-              role={message.role}
-              fragment={message.fragment}
-              createdAt={message.createdAt}
               isActiveFragment={activeFragment?.id === message.fragment?.id}
               onFragmentClick={() => setActiveFragment(message.fragment)}
-              type={message.type}
             />
           ))}
-          {isLastMessageUser && <MessageLoading
-              events={events}
+          {isLastMessageUser && (
+            <MessageLoading
+              events={runEvents}
+              startedAt={lastMessage.createdAt}
               isStopping={cancel.isPending}
               onStop={() => cancel.mutate({ projectId })}
-            />}
+            />
+          )}
           <div ref={bottomRef} />
         </div>
       </div>
       <div className="relative p-3 pt-1">
-        <div className="absolute -top-6 left-0 right-0 h-6 bg-gradient-to-b from-transparent to-background pointer-events-none" />
+        <div className="pointer-events-none absolute -top-6 left-0 right-0 h-6 bg-gradient-to-b from-transparent to-white dark:to-zinc-950" />
         <MessageForm projectId={projectId} />
       </div>
     </div>

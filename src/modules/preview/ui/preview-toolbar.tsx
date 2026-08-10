@@ -104,13 +104,16 @@ export const PreviewToolbar = ({
   };
 
   return (
-    <div className="flex items-center gap-x-1 border-b bg-sidebar p-2">
-      <div className="flex items-center rounded-md border">
+    <div className="flex items-center gap-x-1 border-b bg-white/95 p-2 backdrop-blur-xl dark:bg-zinc-950/95">
+      <div className="flex items-center rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
         <Hint text="Select an element to edit" side="bottom" align="start">
           <Button
             size="sm"
             variant={mode === "inspect" ? "default" : "ghost"}
-            className="h-7 rounded-r-none"
+            className={cn(
+              "h-7 rounded-r-none",
+              mode === "inspect" && "bg-indigo-600 text-white hover:bg-indigo-500",
+            )}
             disabled={disabled || !inspectorAvailable}
             onClick={() => toggleMode("inspect")}
           >
@@ -122,7 +125,10 @@ export const PreviewToolbar = ({
           <Button
             size="sm"
             variant={mode === "text-edit" ? "default" : "ghost"}
-            className="h-7 rounded-l-none"
+            className={cn(
+              "h-7 rounded-l-none",
+              mode === "text-edit" && "bg-indigo-600 text-white hover:bg-indigo-500",
+            )}
             disabled={disabled || !inspectorAvailable}
             onClick={() => toggleMode("text-edit")}
           >
@@ -141,7 +147,7 @@ export const PreviewToolbar = ({
         }}
         disabled={disabled}
       >
-        <SelectTrigger size="sm" className="h-7 w-[150px] text-xs">
+        <SelectTrigger size="sm" className="h-7 w-[150px] border-zinc-200 bg-white text-xs dark:border-zinc-800 dark:bg-zinc-900">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -183,7 +189,7 @@ export const PreviewToolbar = ({
         onValueChange={(v) => onZoomChange(Number(v))}
         disabled={disabled}
       >
-        <SelectTrigger size="sm" className="h-7 w-[76px] text-xs">
+        <SelectTrigger size="sm" className="h-7 w-[76px] border-zinc-200 bg-white text-xs dark:border-zinc-800 dark:bg-zinc-900">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -204,7 +210,7 @@ export const PreviewToolbar = ({
         onClick={handleCopy}
         disabled={!sandboxUrl}
         className={cn(
-          "flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border px-2 text-left text-xs",
+          "flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border border-zinc-200 bg-white px-2 text-left text-xs dark:border-zinc-800 dark:bg-zinc-900",
           "text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50",
         )}
         title={sandboxUrl ?? "No preview running"}

@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { generateSlug } from "random-word-slugs";
 
 import { prisma } from "@/lib/db";
 import { inngest } from "@/inngest/client";
+import { projectTitleFromPrompt } from "@/lib/project-title";
 import { consumeCredits } from "@/lib/usage";
 import {
   FilesVersionConflictError,
@@ -85,6 +85,29 @@ async function requireProject(projectId: string, userId: string) {
   return project;
 }
 
+/**
+ * The catalog as the pickers consume it.
+ *
+ * One shape for both surfaces. The home composer and the project picker used to
+ * map the registry separately, which is how they drifted into showing different
+ * second lines, different provider names and different model sets.
+ */
+function toModelOptions() {
+  return listModels().map((m) => ({
+    id: m.id,
+    label: m.label,
+    provider: m.provider,
+    tier: m.tier,
+    description: m.description,
+    available: m.available,
+    contextWindow: m.contextWindow,
+    pricePerMTok: m.pricePerMTok,
+    // A "fast" model has no code role — it exists for titles and summaries and
+    // must not be offered as the model that builds the app.
+    usableForCode: m.roles.includes("code"),
+  }));
+}
+
 export const projectsRouter = createTRPCRouter({
   getOne: protectedProcedure
     .input(
@@ -111,7 +134,7 @@ export const projectsRouter = createTRPCRouter({
           .min(1, { message: "Value is required" })
           .max(10000, { message: "Value is too long" }),
         modelId: z.string().nullable().optional(),
-        framework: z.enum(["NEXTJS", "STATIC_HTML"]).default("NEXTJS"),
+        framework: z.enum(["NEXTJS", "STATIC_HTML"]).default("STATIC_HTML"),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -124,7 +147,7 @@ export const projectsRouter = createTRPCRouter({
       const createdProject = await prisma.project.create({
         data: {
           userId: ctx.auth.userId!,
-          name: generateSlug(2, { format: "kebab" }),
+          name: projectTitleFromPrompt(input.value),
           framework: input.framework,
           // Seeded so a static project has something to serve before the
           // first build finishes, instead of a 404.
@@ -203,19 +226,7 @@ export const projectsRouter = createTRPCRouter({
    * Used by the home composer, where a model is chosen before a project exists.
    */
   getModelCatalog: protectedProcedure.query(async () => {
-    return {
-      models: listModels().map((m) => ({
-        id: m.id,
-        label: m.label,
-        provider: m.provider,
-        tier: m.tier,
-        description: m.description,
-        available: m.available,
-        contextWindow: m.contextWindow,
-        pricePerMTok: m.pricePerMTok,
-        usableForCode: m.roles.includes("code"),
-      })),
-    };
+    return { models: toModelOptions() };
   }),
 
   /** Model catalog + the project's current selection. */
@@ -223,7 +234,7 @@ export const projectsRouter = createTRPCRouter({
     .input(z.object({ projectId: z.string().min(1) }))
     .query(async ({ input, ctx }) => {
       const project = await requireProject(input.projectId, ctx.auth.userId!);
-      return { models: listModels(), selected: project.modelId };
+      return { models: toModelOptions(), selected: project.modelId };
     }),
 
   setModel: protectedProcedure

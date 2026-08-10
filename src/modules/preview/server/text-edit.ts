@@ -64,6 +64,108 @@ interface TextMatch {
 }
 
 const JSX_UNSAFE = /[<>{}]/;
+const HTML_PATH = /\.html?$/i;
+const HTML_RAW_TEXT_TAGS = new Set(["script", "style", "template", "noscript"]);
+
+function lineAt(source: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset; i++) {
+    if (source.charCodeAt(i) === 10) line++;
+  }
+  return line;
+}
+
+function escapeHtmlText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Find the end of an HTML tag without being fooled by `>` inside quotes. */
+function htmlTagEnd(source: string, from: number): number {
+  let quote = "";
+  for (let i = from + 1; i < source.length; i++) {
+    const char = source[i];
+    if (quote) {
+      if (char === quote) quote = "";
+    } else if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === ">") {
+      return i + 1;
+    }
+  }
+  return source.length;
+}
+
+/**
+ * Locate visible literal text in a plain HTML document.
+ *
+ * Attribute values, comments and raw script/style contents are deliberately
+ * excluded. This gives static sites the same deterministic edit path as JSX
+ * without risking a replacement in code that happens to contain the label.
+ */
+function findHtmlTextMatches(source: string, oldText: string): TextMatch[] {
+  const matches: TextMatch[] = [];
+  const needles = [...new Set([oldText, escapeHtmlText(oldText)])].filter(Boolean);
+  const lower = source.toLowerCase();
+  let rawTag: string | null = null;
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    if (rawTag) {
+      const closing = lower.indexOf(`</${rawTag}`, cursor);
+      if (closing === -1) break;
+      cursor = closing;
+      rawTag = null;
+      continue;
+    }
+
+    if (source.startsWith("<!--", cursor)) {
+      const end = source.indexOf("-->", cursor + 4);
+      cursor = end === -1 ? source.length : end + 3;
+      continue;
+    }
+
+    if (source[cursor] === "<") {
+      const end = htmlTagEnd(source, cursor);
+      const tag = source.slice(cursor, end);
+      const parsed = tag.match(/^<\s*(\/?)\s*([a-z][\w:-]*)/i);
+      if (parsed && !parsed[1] && HTML_RAW_TEXT_TAGS.has(parsed[2].toLowerCase())) {
+        rawTag = parsed[2].toLowerCase();
+      }
+      cursor = end;
+      continue;
+    }
+
+    const nextTag = source.indexOf("<", cursor);
+    const end = nextTag === -1 ? source.length : nextTag;
+    const segment = source.slice(cursor, end);
+
+    for (const needle of needles) {
+      let searchFrom = 0;
+      for (;;) {
+        const index = segment.indexOf(needle, searchFrom);
+        if (index === -1) break;
+        const from = cursor + index;
+        matches.push({
+          node: {
+            type: "HTMLText",
+            start: from,
+            end: from + needle.length,
+            loc: { start: { line: lineAt(source, from), column: 0 }, end: { line: lineAt(source, from) } },
+          },
+          from,
+          to: from + needle.length,
+          line: lineAt(source, from),
+          enclosingFunction: null,
+        });
+        searchFrom = index + Math.max(1, needle.length);
+      }
+    }
+
+    cursor = end;
+  }
+
+  return matches;
+}
 
 function enclosingFunctionName(ancestors: Node[]): string | null {
   for (let i = ancestors.length - 1; i >= 0; i--) {
@@ -139,6 +241,10 @@ function replacementFor(
   newText: string,
 ): { from: number; to: number; text: string } | null {
   const node = match.node;
+
+  if (node.type === "HTMLText") {
+    return { from: match.from, to: match.to, text: escapeHtmlText(newText) };
+  }
 
   if (node.type === "JSXText") {
     // `<` `>` `{` `}` are syntax in JSX text; wrap in an expression container.
@@ -248,9 +354,19 @@ export async function applyTextEdit(input: {
 
   for (const candidate of ordered) {
     const source = files[candidate.path];
-    if (!source || !source.includes(oldText)) continue;
+    if (!source) continue;
+    const isHtml = HTML_PATH.test(candidate.path);
+    if (
+      isHtml
+        ? !source.includes(oldText) && !source.includes(escapeHtmlText(oldText))
+        : !source.includes(oldText)
+    ) {
+      continue;
+    }
 
-    const all = findTextMatches(source, oldText);
+    const all = isHtml
+      ? findHtmlTextMatches(source, oldText)
+      : findTextMatches(source, oldText);
     if (all.length === 0) continue;
 
     const exactLine = resolved.exact?.path === candidate.path ? resolved.exact.line : null;

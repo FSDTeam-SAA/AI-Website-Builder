@@ -6,19 +6,30 @@ import { UsageAccumulator } from "@/lib/ai/usage-meter";
 import { createCheckpoint } from "@/lib/checkpoints";
 import { reconcileSandboxFiles } from "@/lib/sandbox/reconcile";
 import { getProjectFiles } from "@/lib/project-files";
+import { frameworkConfig } from "@/lib/framework";
 import { connectIfAlive, ensureSandbox } from "@/lib/sandbox/manager";
 import { resolveLocator } from "@/modules/preview/server/resolve-locator";
 import type { VibeElementLocator } from "@/modules/preview/protocol";
-import { FIX_ERROR_PROMPT, RESPONSE_PROMPT, SURGICAL_EDIT_PROMPT } from "@/prompts";
+import {
+  FIX_ERROR_PROMPT,
+  RESPONSE_PROMPT,
+  STATIC_SURGICAL_EDIT_PROMPT,
+  SURGICAL_EDIT_PROMPT,
+} from "@/prompts";
 
 import { inngest } from "../client";
+import { withoutStepTools } from "../als";
 import {
   createAgentEventEmitter,
   surgicalAgentTools,
   syncManifests,
   type ToolContext,
 } from "../tools";
-import { extractTaskSummary, lastAssistantTextMessageContent, parseAgentOutput } from "../utils";
+import {
+  lastAssistantTextMessageContent,
+  parseAgentOutput,
+  resolveCompletion,
+} from "../utils";
 
 interface AgentState {
   summary: string;
@@ -87,7 +98,7 @@ function buildSelectionContext(
 async function runSurgicalAgent(opts: {
   projectId: string;
   messageId: string;
-  systemPrompt: string;
+  systemPrompt?: string;
   userPrompt: string;
   emitLabel: string;
 }) {
@@ -109,33 +120,42 @@ async function runSurgicalAgent(opts: {
   if (!sandbox) throw new Error("Lost connection to the preview sandbox");
 
   const { files } = await getProjectFiles(projectId);
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { modelId: true, framework: true },
+  });
+
+  const fw = frameworkConfig(project?.framework);
+
   const ctx: ToolContext = {
     projectId,
     messageId,
     sandbox,
     files: { ...files },
     touched: {},
+    previewUrl: session.url,
+    settleMs: fw.usesNpm ? undefined : 0,
+    usesNpm: fw.usesNpm,
+    fileRoot: fw.fileRoot || undefined,
     emit,
   };
-
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { modelId: true },
-  });
-
   const editSpec = resolveModelSpec("edit", project?.modelId);
   const usage = new UsageAccumulator();
 
   const agent = createAgent<AgentState>({
     name: "surgical-edit-agent",
     description: "Makes precise, minimal edits to existing code",
-    system: opts.systemPrompt,
+    system:
+      opts.systemPrompt ??
+      (fw.id === "STATIC_HTML" ? STATIC_SURGICAL_EDIT_PROMPT : SURGICAL_EDIT_PROMPT),
     model: getModel("edit", { override: project?.modelId }),
     tools: surgicalAgentTools(ctx),
     lifecycle: {
       onResponse: async ({ result, network }) => {
         usage.recordRaw("Edit agent", editSpec, result.raw);
-        const summary = extractTaskSummary(lastAssistantTextMessageContent(result));
+        const text = lastAssistantTextMessageContent(result);
+        const summary = resolveCompletion(text, result, ctx.touched);
         if (summary && network) network.state.data.summary = summary;
         return result;
       },
@@ -157,8 +177,8 @@ async function runSurgicalAgent(opts: {
   // Capture anything produced outside the write tools before the sandbox can be
   // recycled — otherwise a package installed or file scaffolded during this edit
   // is destroyed on the next rehydrate.
-  await syncManifests(ctx);
-  await reconcileSandboxFiles(sandbox, projectId, ctx.files).catch(() => null);
+  await syncManifests(ctx, { usesNpm: fw.usesNpm });
+  await reconcileSandboxFiles(sandbox, projectId, ctx.files, { fileRoot: fw.fileRoot }).catch(() => null);
 
   return {
     summary: result.state.data.summary ?? "",
@@ -223,15 +243,9 @@ async function finish(opts: {
 
   const { filesVersion } = await getProjectFiles(projectId);
 
-  await createCheckpoint(projectId, {
-    kind: "TURN",
-    label: opts.summary.split("\n")[0].slice(0, 80) || "Edit",
-    messageId,
-  }).catch(() => null);
-
   const u = opts.usage;
 
-  await prisma.message.create({
+  const assistantMessage = await prisma.message.create({
     data: {
       projectId,
       content: reply,
@@ -253,6 +267,14 @@ async function finish(opts: {
       },
     },
   });
+
+  // Linked to the reply, not the prompt: that is the row the chat hangs the
+  // "restore this version" control off.
+  await createCheckpoint(projectId, {
+    kind: "TURN",
+    label: opts.summary.split("\n")[0].slice(0, 80) || "Edit",
+    messageId: assistantMessage.id,
+  }).catch(() => null);
 
   if (u) {
     await prisma.project.update({
@@ -315,27 +337,34 @@ export const surgicalEditFunction = inngest.createFunction(
       return true;
     });
 
-    const outcome = await (async () => {
-      const { files } = await getProjectFiles(projectId);
-      const selection = buildSelectionContext(locator, files);
-      const userPrompt =
-        `${selection}\n\n<user_instruction>\n${instruction}\n</user_instruction>`;
+    const outcome = await step.run("run-surgical-edit", () =>
+      withoutStepTools(async () => {
+        const { files } = await getProjectFiles(projectId);
+        const selection = buildSelectionContext(locator, files);
+        const userPrompt =
+          `${selection}\n\n<user_instruction>\n${instruction}\n</user_instruction>`;
 
-      return runSurgicalAgent({
-        projectId,
-        messageId,
-        systemPrompt: SURGICAL_EDIT_PROMPT,
-        userPrompt,
-        emitLabel: "Locating the element you selected",
-      });
-    })();
+        return runSurgicalAgent({
+          projectId,
+          messageId,
+          userPrompt,
+          emitLabel: "Locating the element you selected",
+        });
+      }),
+    );
 
-    return finish({
-      projectId,
-      messageId,
-      ...outcome,
-      fallbackReply: "Done — I've updated that element.",
-    });
+    // In a step, because it writes the assistant message and a checkpoint. Left
+    // bare it re-ran on every replay and posted the reply more than once.
+    return step.run("finish-surgical-edit", () =>
+      withoutStepTools(() =>
+        finish({
+          projectId,
+          messageId,
+          ...outcome,
+          fallbackReply: "Done — I've updated that element.",
+        }),
+      ),
+    );
   },
 );
 
@@ -376,21 +405,29 @@ export const fixErrorFunction = inngest.createFunction(
       return true;
     });
 
-    const outcome = await runSurgicalAgent({
-      projectId,
-      messageId,
-      systemPrompt: FIX_ERROR_PROMPT,
-      userPrompt:
-        `The app produced the following ${source} error. Find the root cause and fix it.\n\n` +
-        `<error_output>\n${errorText.slice(0, 16000)}\n</error_output>`,
-      emitLabel: "Reading the error",
-    });
+    const outcome = await step.run("run-fix", () =>
+      withoutStepTools(() =>
+        runSurgicalAgent({
+          projectId,
+          messageId,
+          systemPrompt: FIX_ERROR_PROMPT,
+          userPrompt:
+            `The app produced the following ${source} error. Find the root cause and fix it.\n\n` +
+            `<error_output>\n${errorText.slice(0, 16000)}\n</error_output>`,
+          emitLabel: "Reading the error",
+        }),
+      ),
+    );
 
-    return finish({
-      projectId,
-      messageId,
-      ...outcome,
-      fallbackReply: "Fixed — the error should be gone now.",
-    });
+    return step.run("finish-fix", () =>
+      withoutStepTools(() =>
+        finish({
+          projectId,
+          messageId,
+          ...outcome,
+          fallbackReply: "Fixed — the error should be gone now.",
+        }),
+      ),
+    );
   },
 );

@@ -78,9 +78,20 @@ export async function GET(
     let body: Buffer | string = object.body;
 
     if (key.endsWith(".html")) {
+      // A directory document is served WITHOUT a trailing slash, because Next
+      // normalises `/p/slug/` to `/p/slug`. Relative URLs in the page therefore
+      // resolve against the parent — `styles/main.css` became `/p/styles/main.css`
+      // and 404'd, so every published site rendered unstyled. A <base> pins
+      // resolution to the document's own directory, which fixes stylesheets,
+      // scripts, images and relative fetches in one go.
+      const base = key.endsWith("/index.html")
+        ? `/p/${slug}/${segments.length ? `${segments.join("/")}/` : ""}`
+        : null;
+
       body = injectMeta(object.body.toString("utf8"), {
         title: project.name,
         url: `${getAppOrigin()}/p/${slug}${segments.length ? `/${segments.join("/")}` : ""}`,
+        base,
       });
 
       // Sampled so a busy page doesn't hammer the database.
@@ -115,9 +126,23 @@ export async function GET(
   return notFound("That page doesn't exist in this site.");
 }
 
-/** Add share metadata without disturbing the exported markup. */
-function injectMeta(html: string, opts: { title: string; url: string }): string {
-  if (html.includes('property="og:title"')) return html;
+/** Add share metadata and the directory base without disturbing the markup. */
+function injectMeta(
+  html: string,
+  opts: { title: string; url: string; base?: string | null },
+): string {
+  let out = html;
+
+  // Must come before anything that carries a URL, so it goes directly after
+  // <head>. Skipped when the document already declares its own base.
+  if (opts.base && !/<base\b/i.test(out)) {
+    const tag = `<base href="${escapeAttr(opts.base)}">`;
+    out = /<head[^>]*>/i.test(out)
+      ? out.replace(/<head[^>]*>/i, (head) => `${head}${tag}`)
+      : `${tag}${out}`;
+  }
+
+  if (out.includes('property="og:title"')) return out;
 
   const tags = [
     `<meta property="og:title" content="${escapeAttr(opts.title)}">`,
@@ -127,7 +152,7 @@ function injectMeta(html: string, opts: { title: string; url: string }): string 
     `<meta name="generator" content="Vibe">`,
   ].join("");
 
-  return html.includes("</head>") ? html.replace("</head>", `${tags}</head>`) : html;
+  return out.includes("</head>") ? out.replace("</head>", `${tags}</head>`) : out;
 }
 
 function escapeAttr(value: string): string {

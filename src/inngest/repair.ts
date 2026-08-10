@@ -45,8 +45,20 @@ export async function verifyAndRepair(
   const usage = new UsageAccumulator();
   const spec = resolveModelSpec("edit", opts.modelOverride);
 
+  // The agent is told to call `checkApp` before finishing, and usually does.
+  // Re-running the same check here cost a settle delay plus a page fetch on
+  // every run for a verdict we already had.
+  if (ctx.verifiedAtSeq !== undefined && ctx.verifiedAtSeq === (ctx.writeSeq ?? 0)) {
+    return {
+      healthy: true,
+      attempts: 0,
+      errors: [],
+      usage: { ...usage.totals(), detail: usage.detail() },
+    };
+  }
+
   await ctx.emit("STATUS", "Testing the app");
-  let report = await checkAppHealth(sandbox, previewUrl);
+  let report = await checkAppHealth(sandbox, previewUrl, { settleMs: ctx.settleMs });
 
   if (report.ok) {
     await ctx.emit("TOOL_RESULT", "App compiles and renders");
@@ -96,7 +108,7 @@ export async function verifyAndRepair(
     );
 
     await ctx.emit("STATUS", "Re-testing");
-    report = await checkAppHealth(sandbox, previewUrl);
+    report = await checkAppHealth(sandbox, previewUrl, { settleMs: ctx.settleMs });
   }
 
   if (report.ok) {

@@ -35,6 +35,15 @@ bash scripts/prisma-generate-safe.sh   # regenerate while `npm run dev` is runni
 - **`next build` and `next dev` fight over `.next`.** If a build fails with
   `PageNotFoundError` on unrelated routes, that's why. Retry or stop the dev
   server.
+- **Never let agent-kit see Inngest's step tooling.** `AgenticModel.infer`
+  checks for step tools before every inference and, finding any, routes the call
+  through `step.ai.infer` instead of calling the provider. Inside a `step.run`
+  that *deadlocks* — an AI-gateway step has no locally executable function, so
+  the SDK waits for Inngest to settle it, which cannot happen until the
+  enclosing step returns. At the top level it instead memoises: all iterations
+  share one step id, so iteration 1 replays forever, re-running the tool writes
+  (which are plain handlers, not steps) each time. Every `network.run` /
+  `agent.run` goes inside `withoutStepTools()` from `src/inngest/als.ts`.
 - **Client components must not import server modules.** Two real build breaks
   came from this: `project-files.ts` pulls in Prisma, and `ai/providers.ts` pulls
   in `@inngest/agent-kit` → OpenTelemetry → `async_hooks`. Dependency-free
@@ -138,11 +147,19 @@ sandbox-templates/nextjs/
 - Device presets, zoom, rotate, route bar, fullscreen, sleep/wake states.
 - Console drawer with forwarded errors and one-click "Fix with AI".
 - Click-to-edit: inline text editing (deterministic, AST-based, no LLM) and
-  targeted AI edits aimed at one element.
-- Activity tab streaming the code as it's written.
+  targeted AI edits aimed at one element. The selected element is published to
+  the chat composer as a chip and the instruction is typed there — the preview
+  only shows what is selected, so there is one composer, not two.
+- Agent steps stream inline in the chat (not a separate tab), with the code each
+  write produced one click down. Finished turns keep a collapsed "Worked for N
+  steps" that loads on expand — file writes carry their content, so they must
+  never ride along on the chat poll.
 
 **Data + ownership**
-- Checkpoints with restore (deletes files added since — not overwrite-only).
+- Checkpoints with restore (deletes files added since — not overwrite-only),
+  surfaced per turn in the chat as `v1, v2 …` with one-click revert. Version
+  numbers count *turns*, not surviving snapshots, so pruning history does not
+  silently renumber earlier versions.
 - Server-side ZIP download, project duplicate, rename, delete.
 - CodeMirror editor with save-to-sandbox, file create/rename/delete.
 - Token meter: per-message, per-project, and rolling 5h/24h/7d windows.
@@ -165,7 +182,17 @@ sandbox-templates/nextjs/
   that share the substring.
 - The deterministic text-edit path **may fail but must never guess**. Ambiguous?
   Return `needs_ai` and fall through to the model with the locator attached.
+- The framework's `fileRoot` is applied by the **tool handler** (`resolvePath`),
+  not by the prompt. A static project is rooted at `site/`; the model omits that
+  prefix as often as not, and a stray `index.html` at the repo root is never
+  served. Same reason `PROTECTED_PATHS` lives in the handler.
 - Restore must delete files created after the checkpoint, or it leaves orphans.
+- `Checkpoint.messageId` points at the **assistant** message a turn produced —
+  that is the row the chat hangs "restore this version" off. `AgentEvent.messageId`
+  points at the **user** message that started the run, because the events are
+  emitted long before the reply exists. Both are mapped to the turn server-side
+  in `messages.getMany`, which also carries older rows forward from the older
+  prompt-linked layout.
 - The inspector's parent-origin **allowlist** is authority; the `?vibe_parent=`
   query param is only ever matched against it. E2B preview URLs are public.
 - Never `postMessage(…, "*")`. Parent also checks
@@ -206,5 +233,10 @@ sandbox-templates/nextjs/
   code prevents over restating the code.
 - Server-only modules start with `import "server-only"`.
 - tRPC procedures are all `protectedProcedure` and scope queries by `userId`.
-- Costs shown in the UI are **estimates** from a local price table and are
-  labelled as such everywhere.
+- The UI counts **tokens only**. Cost is still recorded per message
+  (`Message.costUsd`) and estimated from a local price table, but it is not
+  displayed: a second number in dollars competed with the consumption reading
+  the meter exists to give. Anything reintroducing it must label it an estimate.
+- Progress tracks must be neutral (`bg-muted`), never the stock `bg-primary/20`.
+  At real fill levels (~2% of a token window) a brand-tinted track reads as a
+  *full* bar, which is how three near-empty meters came to look maxed out.
