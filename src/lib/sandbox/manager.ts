@@ -36,7 +36,7 @@ export const BOOT_TIMEOUT_MS = 120_000;
 
 export type SandboxSession =
   | { status: "RUNNING"; sandboxId: string; url: string; expiresAt: Date }
-  | { status: "CREATING" }
+  | { status: "CREATING"; phase: "QUEUED" | "BOOTING" }
   | { status: "EXPIRED" }
   | { status: "NONE" }
   | { status: "FAILED"; error: string };
@@ -59,7 +59,7 @@ function urlForHost(host: string): string {
  */
 export async function probeDevServer(
   url: string,
-  opts: { timeoutMs?: number; requireBody?: boolean } = {},
+  opts: { timeoutMs?: number; requireBody?: boolean; requireStaticServer?: boolean } = {},
 ): Promise<{ ok: boolean; status?: number; reason?: string }> {
   const timeoutMs = opts.timeoutMs ?? 5_000;
   try {
@@ -70,6 +70,9 @@ export async function probeDevServer(
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return { ok: false, status: res.status, reason: `HTTP ${res.status}` };
+    if (opts.requireStaticServer && res.headers.get("x-vibe-static-server") !== "1") {
+      return { ok: false, status: res.status, reason: "wrong preview runtime" };
+    }
     if (!opts.requireBody) return { ok: true, status: res.status };
 
     const html = await res.text();
@@ -83,14 +86,27 @@ export async function probeDevServer(
   }
 }
 
-async function waitForDevServer(url: string, timeoutMs = BOOT_TIMEOUT_MS) {
+async function waitForDevServer(
+  url: string,
+  timeoutMs = BOOT_TIMEOUT_MS,
+  requireStaticServer = false,
+) {
   const deadline = Date.now() + timeoutMs;
   let last = "no attempt made";
+  // Backs off from 250ms to 2s. A static server is ready almost immediately, so
+  // a flat 2s poll spent most of the boot budget waiting on an app that was
+  // already serving; a Next compile still gets the slow cadence it needs.
+  let delay = 250;
   while (Date.now() < deadline) {
-    const probe = await probeDevServer(url, { timeoutMs: 5_000, requireBody: true });
+    const probe = await probeDevServer(url, {
+      timeoutMs: 5_000,
+      requireBody: true,
+      requireStaticServer,
+    });
     if (probe.ok) return { ok: true as const };
     last = probe.reason ?? "unknown";
-    await new Promise((r) => setTimeout(r, 2_000));
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(delay * 2, 2_000);
   }
   return { ok: false as const, reason: last };
 }
@@ -184,32 +200,134 @@ export async function writeInspectorConfig(sandbox: Sandbox): Promise<void> {
     `// Written by the Vibe app at sandbox boot. Do not edit.\n` +
     `export const ALLOWED_PARENT_ORIGINS: string[] = ${JSON.stringify(origins, null, 2)};\n`;
 
+  // Static HTML cannot compile the TypeScript inspector inside the sandbox.
+  // Upload a prebuilt copy and prepend this deployment's trusted origins so it
+  // works in production as well as localhost. This also upgrades live sandboxes
+  // created from a template that predates the inspector.
+  const staticBundle = await loadStaticRuntimeSource("inspector.bundle.js");
+  const writes = [{ path: `${SANDBOX_ROOT}/vibe/allowed-parents.ts`, data: contents }];
+  if (staticBundle) {
+    const safeOrigins = JSON.stringify(origins).replace(/</g, "\\u003c");
+    writes.push({
+      path: `${SANDBOX_ROOT}/vibe/inspector.bundle.js`,
+      data: `window.__VIBE_ALLOWED_PARENT_ORIGINS__=${safeOrigins};\n${staticBundle}`,
+    });
+  }
+
+  await sandbox.commands
+    .run(`mkdir -p ${SANDBOX_ROOT}/vibe`, { timeoutMs: 15_000 })
+    .catch(() => {});
   await sandbox.files
-    .write([{ path: `${SANDBOX_ROOT}/vibe/allowed-parents.ts`, data: contents }])
+    .write(writes)
     .catch(() => {
       // Older template without the inspector — the preview still works, only
       // click-to-edit is unavailable.
     });
 }
 
+/**
+ * Upload the static file server into the sandbox.
+ *
+ * Static projects need it to serve `site/` and to inject the inspector. The
+ * template image ships a copy, but uploading it at boot means STATIC_HTML
+ * projects also work on an older template that predates it — otherwise the
+ * start command silently fails, `next dev` keeps serving the React scaffold,
+ * and the preview shows the wrong app with no explanation.
+ */
+async function ensureStaticServer(sandbox: Sandbox): Promise<boolean> {
+  const source = await loadStaticRuntimeSource("static-server.cjs");
+  if (!source) return false;
+
+  try {
+    await sandbox.commands.run(`mkdir -p ${SANDBOX_ROOT}/vibe ${SANDBOX_ROOT}/site`, {
+      timeoutMs: 15_000,
+    });
+    await sandbox.files.write([
+      { path: `${SANDBOX_ROOT}/vibe/static-server.cjs`, data: source },
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type StaticRuntimeAsset = "static-server.cjs" | "inspector.bundle.js";
+const cachedStaticRuntime = new Map<StaticRuntimeAsset, string | null>();
+
+async function loadStaticRuntimeSource(asset: StaticRuntimeAsset): Promise<string | null> {
+  // Deployment assets are immutable, but in development the inspector bundle
+  // is regenerated while the Next process stays alive. Do not keep serving the
+  // previous bundle to a sandbox after a hot update.
+  const cacheable = process.env.NODE_ENV === "production";
+  if (cacheable && cachedStaticRuntime.has(asset)) {
+    return cachedStaticRuntime.get(asset) ?? null;
+  }
+  try {
+    const { readFile } = await import("fs/promises");
+    const { join } = await import("path");
+    const source = await readFile(
+      join(process.cwd(), "sandbox-templates/nextjs/vibe", asset),
+      "utf8",
+    );
+    if (cacheable) cachedStaticRuntime.set(asset, source);
+    return source;
+  } catch {
+    if (cacheable) cachedStaticRuntime.set(asset, null);
+    return null;
+  }
+}
+
 async function restartDevServer(
   sandbox: Sandbox,
   startCommand = "npx next dev --turbopack",
 ): Promise<void> {
-  // Kill whichever preview process is running; a project can switch type.
+  // Kill whatever currently holds port 3000.
+  //
+  // `pkill -f 'next dev'` alone is not enough: `next dev` spawns a detached
+  // `next-server` child that keeps the port bound, so the replacement server
+  // died with EADDRINUSE and the old app kept being served. Match every variant,
+  // then wait for the port to actually free before rebinding.
   await sandbox.commands
-    .run("pkill -f 'next dev' || true; pkill -f static-server.cjs || true", {
-      timeoutMs: 20_000,
-    })
+    .run(
+      [
+        // Bracket the first character so the pattern cannot match this very
+        // command line — otherwise pkill kills its own shell and the real
+        // server survives.
+        "pkill -f '[n]ext dev' || true",
+        "pkill -f '[n]ext-server' || true",
+        "pkill -f '[s]tart-server' || true",
+        "pkill -f '[s]tatic-server.cjs' || true",
+      ].join("; "),
+      // The template's start command is launched by E2B as root, while our
+      // commands default to `user`. Without this the kill silently fails and
+      // the old server keeps port 3000 — a static project then kept serving
+      // the Next scaffold.
+      { timeoutMs: 20_000, user: "root" },
+    )
+    .catch(() => {});
+
+  // Poll rather than sleep a fixed amount: process teardown is not instant, and
+  // a premature bind fails silently in the background.
+  await sandbox.commands
+    .run(
+      `for i in $(seq 1 20); do ` +
+        `if ! (exec 3<>/dev/tcp/127.0.0.1/3000) 2>/dev/null; then exit 0; fi; ` +
+        `sleep 0.5; done`,
+      { timeoutMs: 20_000 },
+    )
     .catch(() => {});
   // A .next cache built against different source is a reliable source of ghost
-  // errors after rehydration.
-  await sandbox.commands
-    .run(`rm -rf ${SANDBOX_ROOT}/.next`, { timeoutMs: 60_000 })
-    .catch(() => {});
+  // errors after rehydration. Only Next builds one, and deleting it costs
+  // seconds on a warm template, so skip it for frameworks that never compile.
+  if (startCommand.includes("next")) {
+    await sandbox.commands
+      .run(`rm -rf ${SANDBOX_ROOT}/.next`, { timeoutMs: 60_000 })
+      .catch(() => {});
+  }
+  // Started as root so it can bind port 3000 and replace the template process.
   await sandbox.commands.run(
     `cd ${SANDBOX_ROOT} && ${startCommand} > /tmp/next-dev.log 2>&1`,
-    { background: true, timeoutMs: 20_000 },
+    { background: true, timeoutMs: 20_000, user: "root" },
   );
 }
 
@@ -344,13 +462,20 @@ export async function ensureSandbox(projectId: string): Promise<SandboxSession> 
   if (project.sandboxId) {
     const sandbox = await connectIfAlive(project.sandboxId);
     if (sandbox) {
+      await writeInspectorConfig(sandbox);
+      if (!fw.usesNpm) await ensureStaticServer(sandbox);
       const url = urlForHost(sandbox.getHost(SANDBOX_PORT));
-      const probe = await probeDevServer(url, { timeoutMs: 6_000, requireBody: true });
+      const probe = await probeDevServer(url, {
+        timeoutMs: 6_000,
+        requireBody: true,
+        requireStaticServer: !fw.usesNpm,
+      });
       if (probe.ok) return markRunning(projectId, sandbox);
 
       // Alive but not serving — restart in place rather than burning a new one.
+      if (!fw.usesNpm) await ensureStaticServer(sandbox);
       await restartDevServer(sandbox, fw.startCommand);
-      const booted = await waitForDevServer(url);
+      const booted = await waitForDevServer(url, BOOT_TIMEOUT_MS, !fw.usesNpm);
       if (booted.ok) return markRunning(projectId, sandbox);
       await sandbox.kill().catch(() => {});
     }
@@ -363,13 +488,16 @@ export async function ensureSandbox(projectId: string): Promise<SandboxSession> 
       id: projectId,
       OR: [
         { sandboxStatus: { in: ["NONE", "EXPIRED", "FAILED"] } },
+        // A queued boot deliberately has no timestamp. The worker that wins
+        // this update becomes the active owner by setting one below.
+        { sandboxStatus: "CREATING", sandboxClaimedAt: null },
         { sandboxStatus: "CREATING", sandboxClaimedAt: { lt: staleBefore } },
         { sandboxStatus: "RUNNING" }, // reconnect above already failed
       ],
     },
     data: { sandboxStatus: "CREATING", sandboxClaimedAt: new Date(), sandboxError: null },
   });
-  if (claim.count === 0) return { status: "CREATING" };
+  if (claim.count === 0) return { status: "CREATING", phase: "BOOTING" };
 
   // 3. Create + rehydrate.
   let sandbox: Sandbox | null = null;
@@ -387,6 +515,17 @@ export async function ensureSandbox(projectId: string): Promise<SandboxSession> 
     const { files } = await getProjectFiles(projectId);
     // Static projects have no npm step and always need their own server
     // started, even on the very first boot.
+    if (!fw.usesNpm) {
+      const ok = await ensureStaticServer(sandbox);
+      if (!ok) {
+        await sandbox.kill().catch(() => {});
+        return markFailed(
+          projectId,
+          "Could not install the static file server in the sandbox.",
+        );
+      }
+    }
+
     if (Object.keys(files).length > 0 || !fw.usesNpm) {
       await rehydrateSandbox(sandbox, files, {
         baselineDepsHash: null,
@@ -396,7 +535,7 @@ export async function ensureSandbox(projectId: string): Promise<SandboxSession> 
     }
 
     const url = urlForHost(sandbox.getHost(SANDBOX_PORT));
-    const booted = await waitForDevServer(url);
+    const booted = await waitForDevServer(url, BOOT_TIMEOUT_MS, !fw.usesNpm);
     if (!booted.ok) {
       const log = await tailDevServerLog(sandbox);
       await sandbox.kill().catch(() => {});
@@ -428,6 +567,7 @@ export async function peekSandboxSession(projectId: string): Promise<SandboxSess
       sandboxExpiresAt: true,
       sandboxError: true,
       sandboxClaimedAt: true,
+      updatedAt: true,
     },
   });
   if (!project) return { status: "NONE" };
@@ -445,10 +585,12 @@ export async function peekSandboxSession(projectId: string): Promise<SandboxSess
       };
     }
     case "CREATING": {
-      const stale =
-        project.sandboxClaimedAt &&
-        Date.now() - project.sandboxClaimedAt.getTime() > CLAIM_STALE_MS;
-      return stale ? { status: "EXPIRED" } : { status: "CREATING" };
+      // null means queued for a worker; a timestamp means a worker actively
+      // owns the boot. Both are recoverable if the event/worker disappears.
+      const phase = project.sandboxClaimedAt ? "BOOTING" : "QUEUED";
+      const lastProgressAt = project.sandboxClaimedAt ?? project.updatedAt;
+      const stale = Date.now() - lastProgressAt.getTime() > CLAIM_STALE_MS;
+      return stale ? { status: "EXPIRED" } : { status: "CREATING", phase };
     }
     case "FAILED":
       return { status: "FAILED", error: project.sandboxError ?? "Preview failed to start" };

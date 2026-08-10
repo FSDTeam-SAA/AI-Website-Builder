@@ -198,6 +198,12 @@ export function usePreviewBridge({ sandboxUrl, onTextEdit }: UsePreviewBridgeOpt
     [send],
   );
 
+  const applyOptimisticText = useCallback(
+    (nodeId: string, text: string) =>
+      send({ type: "vibe:applyOptimisticText", nodeId, text }),
+    [send],
+  );
+
   const clearConsole = useCallback(
     () => setState((s) => ({ ...s, consoleEntries: [] })),
     [],
@@ -219,6 +225,7 @@ export function usePreviewBridge({ sandboxUrl, onTextEdit }: UsePreviewBridgeOpt
     send,
     clearSelection,
     clearConsole,
+    applyOptimisticText,
     revertOptimisticText,
     reload,
   };

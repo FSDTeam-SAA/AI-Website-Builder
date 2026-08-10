@@ -1,7 +1,7 @@
 import { Sandbox } from "@e2b/code-interpreter";
 
 import { prisma } from "@/lib/db";
-import { ensureSandbox } from "@/lib/sandbox/manager";
+import { CLAIM_STALE_MS, ensureSandbox } from "@/lib/sandbox/manager";
 import { pruneCheckpoints } from "@/lib/checkpoints";
 
 import { inngest } from "../client";
@@ -68,11 +68,14 @@ export const sandboxReaperFunction = inngest.createFunction(
     });
 
     const unstuck = await step.run("release-stale-claims", async () => {
-      const staleBefore = new Date(Date.now() - 10 * 60 * 1000);
+      const staleBefore = new Date(Date.now() - CLAIM_STALE_MS);
       const result = await prisma.project.updateMany({
         where: {
           sandboxStatus: "CREATING",
-          sandboxClaimedAt: { lt: staleBefore },
+          OR: [
+            { sandboxClaimedAt: { lt: staleBefore } },
+            { sandboxClaimedAt: null, updatedAt: { lt: staleBefore } },
+          ],
         },
         data: {
           sandboxStatus: "FAILED",

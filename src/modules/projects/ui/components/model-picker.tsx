@@ -6,27 +6,18 @@ import { CpuIcon } from "lucide-react";
 
 import { useTRPC } from "@/trpc/client";
 import {
+  DEFAULT_MODEL_VALUE,
+  ModelOptions,
+} from "@/components/model-options";
+import {
   Select,
   SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 
 interface Props {
   projectId: string;
 }
-
-const PROVIDER_LABELS: Record<string, string> = {
-  openai: "OpenAI",
-  anthropic: "Anthropic",
-  gemini: "Google",
-  grok: "xAI",
-};
-
-const DEFAULT_VALUE = "__default__";
 
 /**
  * Per-project model selection.
@@ -56,58 +47,36 @@ export const ModelPicker = ({ projectId }: Props) => {
 
   if (!data) return null;
 
-  const grouped = data.models.reduce<Record<string, typeof data.models>>((acc, model) => {
-    (acc[model.provider] ??= []).push(model);
-    return acc;
-  }, {});
+  const selected = data.selected
+    ? data.models.find((m) => m.id === data.selected)
+    : null;
 
   return (
     <Select
-      value={data.selected ?? DEFAULT_VALUE}
+      value={data.selected ?? DEFAULT_MODEL_VALUE}
       disabled={setModel.isPending}
       onValueChange={(value) =>
         setModel.mutate({
           projectId,
-          modelId: value === DEFAULT_VALUE ? null : value,
+          modelId: value === DEFAULT_MODEL_VALUE ? null : value,
         })
       }
     >
       <SelectTrigger
         size="sm"
-        className="h-7 w-[168px] text-xs"
+        className="composer-model h-7 w-[150px] border-zinc-200 bg-white text-xs dark:border-zinc-700 dark:bg-zinc-900"
         aria-label="Model used to generate code"
       >
         <CpuIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <SelectValue placeholder="Model" />
+        {/* Not <SelectValue/>: it echoes the selected row's full children, and
+            these rows are two lines tall. */}
+        <span className="composer-model-label truncate">
+          {selected?.label ?? "Default"}
+        </span>
       </SelectTrigger>
 
-      <SelectContent>
-        <SelectItem value={DEFAULT_VALUE} className="text-xs">
-          Default
-        </SelectItem>
-
-        {Object.entries(grouped).map(([provider, models]) => (
-          <SelectGroup key={provider}>
-            <SelectLabel className="text-[11px]">
-              {PROVIDER_LABELS[provider] ?? provider}
-            </SelectLabel>
-            {models.map((model) => (
-              <SelectItem
-                key={model.id}
-                value={model.id}
-                disabled={!model.available}
-                className="text-xs"
-              >
-                <span className="flex flex-col items-start">
-                  <span>{model.label}</span>
-                  <span className="text-[10px] text-muted-foreground">
-                    {model.available ? model.description : "Needs an API key"}
-                  </span>
-                </span>
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        ))}
+      <SelectContent className="max-h-[26rem] w-72">
+        <ModelOptions models={data.models} />
       </SelectContent>
     </Select>
   );

@@ -68,7 +68,7 @@ function firstLineContaining(content: string, needle: string): number | null {
 
 /** Source files worth searching — generated apps keep their code under app/. */
 function isSearchableSource(path: string): boolean {
-  if (!/\.(tsx|jsx|ts|js)$/.test(path)) return false;
+  if (!/\.(tsx|jsx|ts|js|html?)$/.test(path)) return false;
   if (path.startsWith("node_modules/")) return false;
   // shadcn primitives are vendored and identical across every project; an
   // element's own source is essentially never in here.
@@ -115,6 +115,10 @@ export function resolveLocator(
   const innermost = locator.componentChain.at(-1) ?? null;
   const chain = locator.componentChain.slice(-4);
   const exactText = (locator.text ?? "").trim();
+  const textNeedles = [
+    exactText,
+    exactText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
+  ].filter(Boolean);
   const distinctiveClasses = (locator.className ?? "")
     .split(/\s+/)
     .filter(isDistinctiveClass)
@@ -157,10 +161,12 @@ export function resolveLocator(
     }
 
     // The literal visible text appears in this file.
-    if (exactText.length >= 2 && content.includes(exactText)) {
+    const textNeedle =
+      exactText.length >= 2 ? textNeedles.find((needle) => content.includes(needle)) : null;
+    if (textNeedle) {
       score += 60;
       reasons.push("contains the element's text");
-      line = firstLineContaining(content, exactText) ?? line;
+      line = firstLineContaining(content, textNeedle) ?? line;
     }
 
     // A distinctive (non-utility) class name appears here.
@@ -203,6 +209,19 @@ export function resolveLocator(
 
 function routeMatchesPath(route: string, path: string): boolean {
   const clean = route.split("?")[0].replace(/^\/+|\/+$/g, "");
-  if (!clean) return path === "app/page.tsx" || path === "app/page.jsx";
-  return path.startsWith(`app/${clean}/page.`);
+  if (!clean) {
+    return (
+      path === "app/page.tsx" ||
+      path === "app/page.jsx" ||
+      path === "index.html" ||
+      path === "site/index.html"
+    );
+  }
+  return (
+    path.startsWith(`app/${clean}/page.`) ||
+    path === `${clean}.html` ||
+    path === `site/${clean}.html` ||
+    path === `${clean}/index.html` ||
+    path === `site/${clean}/index.html`
+  );
 }
