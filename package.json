@@ -6,11 +6,11 @@
     "node": ">=20 <25"
   },
   "scripts": {
-    "dev": "concurrently -k -n web,inngest -c cyan,magenta \"npm:dev:web\" \"npm:dev:inngest\"",
-    "dev:web": "node --no-experimental-webstorage ./node_modules/next/dist/bin/next dev --turbopack",
-    "dev:inngest": "inngest-cli dev -u http://localhost:3000/api/inngest",
+    "dev": "node api.js && concurrently -k -n web,inngest -c cyan,magenta \"npm:dev:web\" \"npm:dev:inngest\"",
+    "dev:web": "node api.js && node --no-experimental-webstorage ./node_modules/next/dist/bin/next dev --turbopack",
+    "dev:inngest": "node api.js && inngest-cli dev -u http://localhost:3000/api/inngest",
     "build": "node --no-experimental-webstorage ./node_modules/next/dist/bin/next build",
-    "start": "node --no-experimental-webstorage ./node_modules/next/dist/bin/next start",
+    "start": "node api.js && node --no-experimental-webstorage ./node_modules/next/dist/bin/next start",
     "lint": "next lint",
     "postinstall": "prisma generate"
   },
