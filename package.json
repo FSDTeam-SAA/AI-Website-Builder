@@ -99,7 +99,7 @@
     "@types/prismjs": "^1.26.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "concurrently": "^10.0.4",
+    "concurrently": "^10.0.6",
     "eslint": "^9",
     "eslint-config-next": "15.3.4",
     "inngest-cli": "^1.41.1",
