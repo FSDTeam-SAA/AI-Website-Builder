@@ -6,7 +6,7 @@
       "dom.iterable",
       "esnext"
     ],
-    "allowJs": true,
+    "allowJs": false,
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
@@ -29,18 +29,16 @@
     }
   },
   "include": [
-    "**/*.ts",
-    "**/*.tsx",
-    ".next-dev/types/**/*.ts",
-    ".next/types/**/*.ts",
     "next-env.d.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tests/**/*.ts",
+    "playwright.config.ts",
+    ".next/types/**/*.ts",
+    ".next-dev/types/**/*.ts",
     ".next-browser-tests/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules",
-    // Source for the E2B sandbox image. It is a separate Next application with
-    // its own dependency graph, compiled inside the sandbox — not part of this
-    // app's build.
-    "sandbox-templates"
+    "node_modules"
   ]
 }

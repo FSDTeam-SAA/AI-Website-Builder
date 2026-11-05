@@ -14,7 +14,6 @@
 /coverage
 /test-results/
 /playwright-report/
-.env*
 
 # next.js
 /.next/

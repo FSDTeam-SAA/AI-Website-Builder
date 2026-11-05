@@ -4,7 +4,10 @@ test("owner signs in, generates, edits and reopens a persistent isolated page", 
   page,
   context,
 }) => {
-  await page.goto("/website-builder");
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/website-builder$/);
+  expect((await page.request.get("/api/inngest")).status()).toBe(404);
+  expect((await page.request.get("/api/trpc")).status()).toBe(404);
   await page
     .getByLabel("Email", { exact: true })
     .fill("builder@example.invalid");

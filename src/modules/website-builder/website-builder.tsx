@@ -518,8 +518,8 @@ export function WebsiteBuilder() {
           <span />
           <Link
             href="/"
-            title="Existing app builder"
-            aria-label="Existing app builder"
+            title="Website builder home"
+            aria-label="Website builder home"
           >
             <ArrowLeft size={18} />
           </Link>

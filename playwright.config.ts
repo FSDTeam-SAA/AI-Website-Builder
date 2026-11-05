@@ -19,14 +19,13 @@ export default defineConfig({
     },
     {
       command:
-        "node --no-experimental-webstorage node_modules/next/dist/bin/next dev --port 4310",
+        "node node_modules/next/dist/bin/next dev --port 4310",
       url: "http://localhost:4310/website-builder",
       reuseExistingServer: false,
       timeout: 120000,
       env: {
         KORA_BROWSER_TEST: "1",
         KORA_BACKEND_URL: "http://127.0.0.1:4311/api/v1",
-        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "",
       },
     },
   ],
