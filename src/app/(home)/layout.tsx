@@ -1,10 +1,12 @@
 import { Navbar } from "@/modules/home/ui/components/navbar";
+import { redirect } from "next/navigation";
 
 interface Props {
   children: React.ReactNode;
 };
 
 const Layout = ({ children }: Props) => {
+  if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) redirect("/website-builder");
   return (
     <main className="relative min-h-screen overflow-x-hidden bg-[#fafafe] dark:bg-[#08080d]">
       <Navbar />

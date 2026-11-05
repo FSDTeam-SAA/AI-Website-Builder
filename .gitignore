@@ -12,6 +12,9 @@
 
 # testing
 /coverage
+/test-results/
+/playwright-report/
+.env*
 
 # next.js
 /.next/
@@ -47,3 +50,6 @@ next-env.d.ts
 # local inngest dev-server state (SQLite; contains past event payloads)
 /.inngest
 config.bat
+
+# Disposable browser test build cache
+/.next-browser-tests/

@@ -5,7 +5,9 @@ const createNextConfig = (phase: string): NextConfig => ({
   // Keep the dev server's incremental cache separate from production builds.
   // Running `next build` while `next dev` is active otherwise lets both
   // processes replace manifests inside `.next`, causing recurring ENOENTs.
-  distDir: phase === PHASE_DEVELOPMENT_SERVER ? ".next-dev" : ".next",
+  distDir: phase === PHASE_DEVELOPMENT_SERVER
+    ? process.env.KORA_BROWSER_TEST === "1" ? ".next-browser-tests" : ".next-dev"
+    : ".next",
   // The sandbox manager reads this at runtime to install the static file server
   // into STATIC_HTML sandboxes. Without tracing it in, it is absent from a
   // standalone/serverless build and static previews silently fail.
