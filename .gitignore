@@ -1,0 +1,55 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+/test-results/
+/playwright-report/
+.env*
+
+# next.js
+/.next/
+/.next-dev/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+# `.env*` does NOT match `env.example` (no leading dot). That gap is how live
+# credentials were committed in 1a1270b. Keep env.example placeholders-only.
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+/src/generated/prisma
+
+# local inngest dev-server state (SQLite; contains past event payloads)
+/.inngest
+config.bat
+
+# Disposable browser test build cache
+/.next-browser-tests/
