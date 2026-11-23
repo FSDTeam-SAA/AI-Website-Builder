@@ -61,16 +61,16 @@ export function WebsiteSidebar(props: Props) {
   const desktopSelect = useRef<HTMLSelectElement>(null);
   const mobileSelect = useRef<HTMLSelectElement>(null);
   useEffect(() => {
-    if (hint && !collapsed) (mobileOpen ? mobileSelect : desktopSelect).current?.focus();
-  }, [hint, collapsed, mobileOpen]);
+    if (hint && !collapsed && !props.busy) (mobileOpen ? mobileSelect : desktopSelect).current?.focus();
+  }, [hint, collapsed, mobileOpen, props.busy]);
   function navigate(section: WebsiteSection) {
-    if (props.busy) {
-      setHint("");
-      return;
-    }
     if (section !== "websites" && !props.site) {
       setHint(props.sites.length ? "Choose a website above to open its tools." : "Create your first website to use these tools.");
       setCollapsed(false);
+      return;
+    }
+    if (props.busy) {
+      setHint("");
       return;
     }
     setHint("");

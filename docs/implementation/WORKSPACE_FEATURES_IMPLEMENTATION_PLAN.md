@@ -1,13 +1,28 @@
 # KoraAI Workspace Features: phased implementation plan
 
 Created: 2026-11-05  
-Status: feature roadmap; implementation has not started  
+Status: feature roadmap; partial backend and owner-dashboard foundations exist; expanded Workspace delivery remains pending<br>
 Applications: existing owner dashboard and expanded workspace frontend  
 Design source: `business_owner-dashboard-koraAI`  
 Backend: `backendKoraAi`  
 Visual reference: `business_owner_pages_65_to_365.pdf`
 
 This file owns the non-website workspace modules: overview, full media/brand library, marketing, automations, office, management, inventory, finance, workspace/global settings, help/support and onboarding. The website editor and Website Hub have their own [AI_WEBSITE_BUILDER_IMPLEMENTATION_PLAN.md](AI_WEBSITE_BUILDER_IMPLEMENTATION_PLAN.md).
+
+## Verified baseline — 2026-11-23
+
+This is a source review, not a production acceptance or a completion claim for the phases below.
+
+| Area | Existing foundation | Remaining delivery |
+| --- | --- | --- |
+| Website Builder | Generation, draft editing, page chat/proposals, review/apply, immutable releases, rollback, media and brand tools | Production hosting/domain verification and broader Workspace navigation |
+| Conversational experience | Compact activity details, inline working updates, same-page history and bounded AI follow-up context | Durable background jobs, reconnect/cancel and server-reported intermediate progress |
+| Creative | Website canvas/source editing and brand/image tools | General Creative hub, shared cross-module asset workflows |
+| Automations | Tenant-scoped business API, activation/test/pause/run history, runtime validation | Customer-facing automation builder/hub and complete provider/run acceptance tests |
+| Related website hubs | Several modules have admin API foundations | Services, products, bookings, chatbot, orders, content, blogs, SEO, redirects, analytics and domains remain marked planned in the Builder navigation; admin routes are not owner-ready UI |
+| Shared Workspace | Owner dashboard already has assistant, calendar, team, support and operations surfaces | Shared session handoff, organization selection, cross-app navigation and resource context |
+
+Deliver in this order: verify production publishing boundaries; accept the Builder chat/preview workflow; implement the shared Workspace shell and authenticated handoff; deliver Creative and Automations as separate end-to-end milestones; then connect the related hubs. Each milestone requires tenant authorization, persistence, error states and browser acceptance before it is described as ready. Dates require agreed phase scope, staffing and provider/deployment dependencies; this repository review does not establish a full Workspace launch date.
 
 Phase IDs are continuous across the two files: website Phases 0-13 are defined in the linked website plan; workspace Phases 14-27 are defined here. References to earlier phases mean shared prerequisites, not duplicated implementation tasks. The ledger retains website pages as cross-references so full-PDF coverage stays auditable in one place.
 

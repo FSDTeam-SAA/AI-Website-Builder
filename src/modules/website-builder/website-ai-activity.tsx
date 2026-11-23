@@ -91,6 +91,8 @@ export function WebsiteAIActivity({ activity, canRetry, onDismiss }: Props) {
         )}
       </header>
       {running && <div className="wai-progress" aria-hidden="true"><span /></div>}
+      <details>
+      <summary>View activity details</summary>
       <ol className="wai-steps">
         {steps.map(step => {
           const Icon = stepIcons[step.state];
@@ -105,6 +107,7 @@ export function WebsiteAIActivity({ activity, canRetry, onDismiss }: Props) {
           );
         })}
       </ol>
+      </details>
       {running && seconds >= 20 && (
         <p className="wai-detail">
           Still waiting for {activity.model}. Larger pages can take longer.

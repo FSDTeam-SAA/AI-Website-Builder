@@ -402,6 +402,16 @@
   background: linear-gradient(90deg, #6c58b2, #c0a6ff);
   animation: wai-indeterminate 2s ease-in-out infinite alternate;
 }
+.wai-activity summary {
+  cursor: pointer;
+  color: #c4b5e8;
+  font-size: 11px;
+  padding-top: 10px;
+}
+.wai-activity summary:focus-visible {
+  outline: 2px solid #a494f2;
+  outline-offset: 4px;
+}
 .wai-steps {
   display: grid;
   gap: 17px;

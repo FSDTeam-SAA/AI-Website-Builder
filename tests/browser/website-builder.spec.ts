@@ -64,6 +64,7 @@ test("owner signs in, generates, edits and reopens a persistent isolated page", 
   try {
     const activity = page.getByRole("region", { name: "AI activity", exact: true });
     await expect(activity.getByRole("heading")).toHaveText("Kora is creating your page");
+    await expect(page.locator('.wa-working')).toHaveText('Building the page…');
     await expect(activity).toContainText("Using GPT-4.1");
     await expect(activity).toContainText("Waiting for the AI response");
     await expect(activity.getByRole("timer")).not.toHaveText("0s");
@@ -358,7 +359,13 @@ test("editor supports canvas changes, reviewable AI edits, version restore and a
   expect(url).toContain("/site/");
   const visitor = await context.browser()!.newContext();
   const livePage = await visitor.newPage();
-  await livePage.goto(url);
+  const publicResponse = await livePage.goto(url);
+  expect(publicResponse?.headers()['content-security-policy']).toMatch(/^sandbox;/);
+  expect(publicResponse?.headers()['referrer-policy']).toBe('no-referrer');
+  expect(await livePage.evaluate(() => {
+    try { window.localStorage.getItem('kora-isolation-probe'); return false; }
+    catch (error) { return error instanceof DOMException && error.name === 'SecurityError'; }
+  })).toBe(true);
   await expect(
     livePage.getByRole("heading", { name: "Canvas edit saved" }),
   ).toBeVisible();
@@ -386,6 +393,15 @@ test("editor supports canvas changes, reviewable AI edits, version restore and a
 test("sidebar keeps website context, stable width and clear active selection", async ({
   page,
 }) => {
+  // Context/websites can render before model loading finishes. A navigation
+  // click in that interval must keep the site-selection guidance after boot.
+  let releaseModels!: () => void;
+  const modelsReady = new Promise<void>((resolve) => { releaseModels = resolve; });
+  await page.route("**/api/kora/models", async (route) => {
+    const response = await route.fetch();
+    await modelsReady;
+    await route.fulfill({ response });
+  });
   await page.goto("/website-builder");
   await page
     .getByLabel("Email", { exact: true })
@@ -397,6 +413,7 @@ test("sidebar keeps website context, stable width and clear active selection", a
   ).toBeVisible();
   const sidebar = page.getByRole("complementary", { name: "Website sidebar" });
   await sidebar.getByRole("button", { name: "Pages", exact: true }).click();
+  releaseModels();
   await expect(sidebar.getByRole("status")).toContainText(
     /Choose a website|Create your first website/,
   );

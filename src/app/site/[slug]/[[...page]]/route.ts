@@ -39,8 +39,9 @@ export async function GET(
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
         "Content-Security-Policy":
-          "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; font-src https:; form-action 'none'; frame-ancestors 'self'; base-uri 'none'",
+          "sandbox; default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; font-src https:; form-action 'none'; frame-ancestors 'self'; base-uri 'none'; object-src 'none'",
       },
     });
   } catch {

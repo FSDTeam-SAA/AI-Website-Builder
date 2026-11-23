@@ -175,7 +175,7 @@ async function handler(request: NextRequest, { params }: Context) {
       { status: 401 },
     );
   const query = new URLSearchParams();
-  for (const key of ["page", "limit"]) {
+  for (const key of ["page", "limit", "pageId"]) {
     const value = request.nextUrl.searchParams.get(key);
     if (value) query.set(key, value);
   }

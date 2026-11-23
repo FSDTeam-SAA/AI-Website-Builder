@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Plus, Send, Sparkles } from "lucide-react";
 import type { AIActivity } from "./website-ai-activity";
 import {
@@ -40,33 +40,44 @@ type Props = {
   onBlank: (slug: string) => Promise<boolean>;
 };
 export function WebsiteAssistant(props: Props) {
+  const { onError } = props;
   const currentPageId = props.page?._id;
   const [mode, setMode] = useState<"edit" | "new">(props.page ? "edit" : "new");
   const [prompt, setPrompt] = useState("");
   const [slug, setSlug] = useState(props.page ? "new-page" : "home");
   const [messages, setMessages] = useState<WebsiteMessage[]>([]);
   const [review, setReview] = useState<WebsiteProposal | null>(null);
+  const [feedback, setFeedback] = useState("");
+  const conversationEnd = useRef<HTMLDivElement>(null);
+  const messagesPath = `websites/${props.site._id}/messages${currentPageId ? `?pageId=${currentPageId}` : ""}`;
+  useEffect(() => {
+    conversationEnd.current?.scrollIntoView({ block: "nearest" });
+  }, [messages, props.busyLabel, feedback]);
   async function reload() {
     setMessages(
       await koraRequest<WebsiteMessage[]>(
-        `websites/${props.site._id}/messages`,
+        messagesPath,
       ),
     );
   }
   useEffect(() => {
     let active = true;
-    koraRequest<WebsiteMessage[]>(`websites/${props.site._id}/messages`)
+    setMessages([]);
+    setFeedback("");
+    setReview(null);
+    koraRequest<WebsiteMessage[]>(messagesPath)
       .then((result) => {
         if (active) setMessages(result);
       })
-      .catch(props.onError);
+      .catch(error => { if (active) onError(error); });
     setMode(currentPageId ? "edit" : "new");
     return () => {
       active = false;
     };
-  }, [props.site._id, currentPageId, props.onError]);
+  }, [messagesPath, currentPageId, onError]);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    setFeedback("");
     if (mode === "new" || !props.page) {
       const created = await props.onGenerate(prompt, slug);
       if (created) setPrompt("");
@@ -118,6 +129,7 @@ export function WebsiteAssistant(props: Props) {
         {},
       );
       if (result.page) props.onPage(result.page);
+      setFeedback(operation === "apply" ? "Changes applied. The preview now shows your updated draft." : "Proposal discarded. Your draft is unchanged.");
       setReview(null);
       await reload();
     } catch (error) {
@@ -223,11 +235,15 @@ export function WebsiteAssistant(props: Props) {
           </div>
         )}
         {props.busyLabel && (
-          <div className="wa-working">
+          <div className="wa-working" aria-live="polite">
             <span />
-            {props.busyLabel}
+            {props.activity?.status === "running"
+              ? props.activity.kind === "generate" ? "Building the page…" : "Thinking…"
+              : props.busyLabel}
           </div>
         )}
+        {feedback && <div className="wa-message" aria-live="polite"><span>Kora</span><p>{feedback}</p></div>}
+        <div ref={conversationEnd} />
       </div>
       <form id="website-ai-composer" className="kw-composer" onSubmit={submit}>
         <label>
